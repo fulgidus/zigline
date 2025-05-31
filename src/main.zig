@@ -120,16 +120,18 @@ fn initializeTerminalWithGui(allocator: std.mem.Allocator) !void {
 
     Logger.info("Shell spawned successfully", .{});
 
-    // Initialize input processor
-    var input_processor = InputProcessor.init(allocator) catch |err| {
-        Logger.warn("Failed to initialize input processor: {}", .{err});
-        pty.deinit(); // Clean up PTY
-        return err;
-    };
-    defer input_processor.deinit();
+    // Initialize input processor (optional for GUI mode)
+    var input_processor_opt: ?InputProcessor = null;
+    if (InputProcessor.init(allocator)) |input_proc| {
+        input_processor_opt = input_proc;
+        Logger.info("Input processor initialized successfully", .{});
+    } else |err| {
+        Logger.warn("Failed to initialize input processor (continuing without terminal keyboard handling): {}", .{err});
+    }
+    defer if (input_processor_opt) |*input_proc| input_proc.deinit();
 
     // Initialize GUI
-    var gui = Gui.init(allocator, &terminal, &input_processor, &pty) catch |err| { // Added &pty
+    var gui = Gui.init(allocator, &terminal, if (input_processor_opt) |*ip| ip else null, &pty) catch |err| {
         Logger.err("Failed to initialize GUI: {}", .{err});
         pty.deinit(); // Clean up PTY
         return err;

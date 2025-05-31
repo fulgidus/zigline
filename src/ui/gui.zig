@@ -12,23 +12,19 @@ const PTY = @import("../core/pty.zig").PTY; // Added PTY import
 /// DVUI backend type alias
 const Backend = dvui.backend;
 
-/// Font configuration constants
-const FIRA_CODE_FONT_PATH = "assets/fonts/ttf/FiraCode-Regular.ttf";
-const DEFAULT_FONT_SIZE: f32 = 16.0;
-
 /// GUI application state
 pub const Gui = struct {
     allocator: std.mem.Allocator,
     backend: Backend,
     window: dvui.Window,
     terminal: *Terminal,
-    input_processor: *InputProcessor,
+    input_processor: ?*InputProcessor,
     pty: *PTY, // Added pty field
 
-    // Font configuration
-    font_size: f32 = DEFAULT_FONT_SIZE,
-    font_loaded: bool = false,
-    font_data: ?[]u8 = null, // Store font data to free it later
+    initial_test_sent: bool = false, // Flag to send initial test command
+
+    // Frame counting for debugging
+    frame_count: u64 = 0,
 
     // Window state
     window_title: []const u8 = "Zigline Terminal",
@@ -39,21 +35,27 @@ pub const Gui = struct {
     pub fn init(
         allocator: std.mem.Allocator,
         terminal: *Terminal,
-        input_processor: *InputProcessor,
+        input_processor: ?*InputProcessor,
         pty: *PTY, // Added pty argument
     ) !Self {
-        // Initialize SDL3 backend with window
+        // Note: SDL_VIDEODRIVER=x11 should be set via run_x11.sh script
+        
+        // Initialize SDL3 backend with window - try different settings
+        std.log.info("Initializing SDL3 backend...", .{});
         var backend = try Backend.initWindow(.{
             .allocator = allocator,
             .size = .{ .w = 1200.0, .h = 800.0 },
             .min_size = .{ .w = 400.0, .h = 300.0 },
-            .vsync = true,
+            .vsync = false, // Try without vsync
             .title = "Zigline Terminal",
         });
+        std.log.info("SDL3 backend initialized successfully", .{});
 
         // Initialize DVUI window
+        std.log.info("Initializing DVUI window...", .{});
         const dvui_backend = backend.backend();
         const window = try dvui.Window.init(@src(), allocator, dvui_backend, .{});
+        std.log.info("DVUI window initialized successfully", .{});
 
         const gui = Self{
             .allocator = allocator,
@@ -64,59 +66,51 @@ pub const Gui = struct {
             .pty = pty, // Store pty
         };
 
+        // Try to explicitly show the window using SDL calls
+        std.log.info("Attempting to show SDL window explicitly...", .{});
+        _ = Backend.c.SDL_ShowWindow(backend.window);
+        _ = Backend.c.SDL_RaiseWindow(backend.window);
+        std.log.info("Called SDL_ShowWindow and SDL_RaiseWindow", .{});
+
+        std.log.info("GUI initialization complete", .{});
         return gui;
     }
 
     /// Clean up GUI resources
     pub fn deinit(self: *Self) void {
-        // Free font data if allocated
-        if (self.font_data) |font_bytes| {
-            self.allocator.free(font_bytes);
-        }
-
         self.window.deinit();
         self.backend.deinit();
     }
 
-    /// Load Fira Code font for terminal rendering
-    fn loadFont(self: *Self) !void {
-        // Try to load the Fira Code font
-        const font_path = FIRA_CODE_FONT_PATH;
-        const font_bytes = std.fs.cwd().readFileAlloc(self.allocator, font_path, 10 * 1024 * 1024) catch |err| switch (err) {
-            error.FileNotFound => {
-                std.log.warn("Fira Code font not found at '{s}', falling back to system font", .{font_path});
-                return; // Early return, font_loaded will be set by caller
-            },
-            else => return err,
-        };
-
-        // Store font data for cleanup later
-        self.font_data = font_bytes;
-
-        std.log.info("Loaded font file '{s}' (size: {d} bytes)", .{ font_path, font_bytes.len });
-        std.log.warn("Skipping custom font registration; using system monospace font for now.", .{});
-
-        // Do NOT call dvui.addFont -- this will force system font usage
-        // dvui.addFont("FiraCode", font_bytes, self.allocator) ...
-        // std.log.info("Loaded Fira Code font successfully", .{});
-    }
-
     /// Main GUI render loop
     pub fn run(self: *Self) !void {
+        std.log.info("Starting main GUI render loop...", .{});
+        
         main_loop: while (true) {
+            // Increment frame counter for debugging
+            self.frame_count += 1;
+
+            // Log every frame to see what's happening with the loop
+            if (self.frame_count <= 5 or self.frame_count % 30 == 0) {
+                std.log.debug("GUI render loop active - frame {}", .{self.frame_count});
+            }
+
             // Begin frame timing for variable framerate
             const nstime = self.window.beginWait(self.backend.hasEvent());
 
             // Mark beginning of DVUI frame
             try self.window.begin(nstime);
 
-            // Load Fira Code font if not already loaded (must be inside DVUI frame)
-            if (!self.font_loaded) {
-                self.loadFont() catch |err| {
-                    std.log.warn("Font load failed: {any}", .{err});
+            // Read PTY output and process it (Phase 6)
+            try self.readPtyOutput();
+
+            // Send initial test command on first frame (for debugging)
+            if (!self.initial_test_sent) {
+                _ = self.pty.write("echo 'Hello from Zigline!' && ps1='$ '\n") catch |err| {
+                    std.log.warn("Failed to send initial test command: {any}", .{err});
                 };
-                // Always mark as loaded to prevent retry, even on failure
-                self.font_loaded = true;
+                self.initial_test_sent = true;
+                std.log.info("Sent initial test command to shell", .{});
             }
 
             // Process SDL events and forward to DVUI
@@ -164,9 +158,38 @@ pub const Gui = struct {
                     try self.processTextEvent(text_event);
                 },
                 .mouse => |mouse_event| {
-                    // Handle mouse events (for future features like selection)
-                    _ = mouse_event;
-                    // std.log.debug("Mouse event: {any}", .{mouse_event});
+                    // Handle mouse events properly to maintain DVUI widget state
+                    // For a terminal emulator, we mainly need to track focus and click position
+                    switch (mouse_event.action) {
+                        .press => {
+                            // Mouse press - could be used for text selection in future
+                            std.log.debug("Mouse press at ({}, {})", .{ mouse_event.p.x, mouse_event.p.y });
+                        },
+                        .release => {
+                            // Mouse release
+                            std.log.debug("Mouse release at ({}, {})", .{ mouse_event.p.x, mouse_event.p.y });
+                        },
+                        .motion => {
+                            // Mouse motion - don't log to avoid spam, just consume the event
+                        },
+                        .focus => {
+                            // Mouse focus events
+                            std.log.debug("Mouse focus event", .{});
+                        },
+                        .wheel_x => |dx| {
+                            // Horizontal wheel scrolling
+                            std.log.debug("Mouse wheel X: {}", .{dx});
+                        },
+                        .wheel_y => |dy| {
+                            // Vertical wheel scrolling 
+                            std.log.debug("Mouse wheel Y: {}", .{dy});
+                        },
+                        .position => {
+                            // Mouse position events
+                            std.log.debug("Mouse position at ({}, {})", .{ mouse_event.p.x, mouse_event.p.y });
+                        },
+                    }
+                    // Event is properly consumed by just processing it in the switch
                 },
                 .close_popup => {
                     // Handle popup close events
@@ -192,16 +215,20 @@ pub const Gui = struct {
 
     /// Process keyboard events and send to terminal
     fn processKeyEvent(self: *Self, key_event: dvui.Event.Key) !void {
+        std.log.info("Key event detected: {any}", .{key_event});
         // Convert DVUI key to terminal input
         const key_data = try self.dvuiKeyToBytes(key_event);
         if (key_data.len > 0) {
-            // try self.terminal.writeInput(key_data); // Old line
+            std.log.info("Sending key data to PTY: '{s}' (length: {})", .{ key_data, key_data.len });
             _ = try self.pty.write(key_data); // Changed to use pty.write
+        } else {
+            std.log.debug("No key data generated for key event", .{});
         }
     }
 
     /// Process text input events
     fn processTextEvent(self: *Self, text_event: dvui.Event.Text) !void {
+        std.log.info("Text event detected: '{s}'", .{text_event.txt});
         // try self.terminal.writeInput(text_event.text); // Old line
         _ = try self.pty.write(text_event.txt); // Correct field name
     }
@@ -210,7 +237,7 @@ pub const Gui = struct {
     fn dvuiKeyToBytes(self: *Self, key_event: dvui.Event.Key) ![]const u8 {
         _ = self;
 
-        // Match on the key code field and DVUI enums
+        // Handle special keys first (basic functionality without modifiers for now)
         switch (key_event.code) {
             dvui.enums.Key.enter => return "\r",
             dvui.enums.Key.backspace => return "\x7f",
@@ -223,16 +250,31 @@ pub const Gui = struct {
             dvui.enums.Key.right => return "\x1b[C",
             dvui.enums.Key.left => return "\x1b[D",
 
-            // Other common special keys
+            // Function keys
+            dvui.enums.Key.f1 => return "\x1b[OP",
+            dvui.enums.Key.f2 => return "\x1b[OQ",
+            dvui.enums.Key.f3 => return "\x1b[OR",
+            dvui.enums.Key.f4 => return "\x1b[OS",
+            dvui.enums.Key.f5 => return "\x1b[15~",
+            dvui.enums.Key.f6 => return "\x1b[17~",
+            dvui.enums.Key.f7 => return "\x1b[18~",
+            dvui.enums.Key.f8 => return "\x1b[19~",
+            dvui.enums.Key.f9 => return "\x1b[20~",
+            dvui.enums.Key.f10 => return "\x1b[21~",
+            dvui.enums.Key.f11 => return "\x1b[23~",
+            dvui.enums.Key.f12 => return "\x1b[24~",
+
+            // Other navigation keys
+            dvui.enums.Key.home => return "\x1b[H",
+            dvui.enums.Key.end => return "\x1b[F",
+            dvui.enums.Key.page_up => return "\x1b[5~",
+            dvui.enums.Key.page_down => return "\x1b[6~",
+            dvui.enums.Key.insert => return "\x1b[2~",
             dvui.enums.Key.delete => return "\x1b[3~",
 
             else => {
-                // This function is primarily for special (non-printable) keys.
-                // Printable characters are expected to be handled by 'text' events.
-                // If a printable key event (e.g. 'a' key) arrives here,
-                // it means it wasn't processed as a text event, possibly due to modifiers
-                // or DVUI's event generation logic. For now, we return an empty sequence.
-                // std.log.debug("Unhandled key in dvuiKeyToBytes: {any}", .{key_event.key});
+                // For unhandled keys, let text events handle them
+                std.log.debug("Unhandled key in dvuiKeyToBytes: {any}", .{key_event.code});
                 return "";
             },
         }
@@ -259,124 +301,158 @@ pub const Gui = struct {
 
     /// Render the terminal interface using DVUI
     fn renderTerminal(self: *Self) !void {
-        // Create main window area with black background
-        var scroll = try dvui.scrollArea(@src(), .{}, .{ .expand = .both, .color_fill = .{ .color = .{ .r = 0x00, .g = 0x00, .b = 0x00 } } });
-        defer scroll.deinit();
-
-        // PHASE 5 IMPLEMENTATION: Avoid text rendering due to DVUI font texture crashes
-        // Show visual representation of terminal using colored rectangles
-
-        // Header area (represents title bar)
-        {
-            var header = try dvui.box(@src(), .vertical, .{
-                .expand = .horizontal,
-                .min_size_content = .{ .h = 40 },
-                .color_fill = .{ .color = .{ .r = 0x20, .g = 0x20, .b = 0x20 } }, // Dark gray
-            });
-            defer header.deinit();
+        // Reduce debug logging frequency
+        if (self.frame_count % 30 == 0) {
+            std.log.debug("renderTerminal() called on frame {}", .{self.frame_count});
         }
 
-        // Get terminal buffer info for visual representation
-        const buffer = &self.terminal.buffer;
-        const cursor_pos = self.terminal.getCursorPosition();
-
-        // Main terminal area (represents buffer content)
-        {
-            var terminal_area = try dvui.box(@src(), .vertical, .{
-                .expand = .both,
-                .color_fill = .{ .color = .{ .r = 0x00, .g = 0x00, .b = 0x00 } }, // Black background
-                .margin = .{ .x = 5, .y = 5 },
-            });
-            defer terminal_area.deinit();
-
-            // Show visual grid representing terminal buffer
-            // Each "cell" is a small rectangle
-            const cell_height = 12;
-            const rows_to_show = @min(buffer.height, 20); // Limit for performance
-
-            var row: u32 = 0;
-            while (row < rows_to_show) : (row += 1) {
-                var row_box = try dvui.box(@src(), .horizontal, .{
-                    .expand = .horizontal,
-                    .min_size_content = .{ .h = cell_height },
-                    .color_fill = if (row == cursor_pos.y)
-                        .{ .color = .{ .r = 0x40, .g = 0x40, .b = 0x40 } } // Highlight cursor row
-                    else
-                        .{ .color = .{ .r = 0x00, .g = 0x00, .b = 0x00 } }, // Normal row
-                    .id_extra = row, // Make each row widget unique
-                });
-                defer row_box.deinit();
-            }
-        }
-
-        // Status bar (represents cursor and buffer info)
-        {
-            var status = try dvui.box(@src(), .vertical, .{
-                .expand = .horizontal,
-                .min_size_content = .{ .h = 25 },
-                .color_fill = .{ .color = .{ .r = 0x00, .g = 0x40, .b = 0x80 } }, // Blue status
-            });
-            defer status.deinit();
-        }
-
-        std.log.debug("Rendered terminal visual ({}x{}) cursor at ({},{})", .{ buffer.width, buffer.height, cursor_pos.x, cursor_pos.y });
-    }
-
-    /// Render the terminal buffer content
-    fn renderTerminalBuffer(self: *Self) !void {
-        // Access the terminal buffer directly and get cursor position
-        const buffer = &self.terminal.buffer;
-        const cursor_pos = self.terminal.getCursorPosition();
-
-        // Create a simple text area for the terminal content
-        var terminal_box = try dvui.box(@src(), .vertical, .{
+        // Create main container for terminal with stable properties
+        _ = try dvui.box(@src(), .vertical, .{
+            .id_extra = 1, // Stable ID
             .expand = .both,
-            .color_fill = .{ .color = .{ .r = 0x00, .g = 0x00, .b = 0x00 } }, // Black background
-            .margin = .{ .x = 10, .y = 10 },
+            .background = true,
+            .color_fill = .{ .color = dvui.Color{ .r = 10, .g = 10, .b = 10 } }, // Dark terminal background
         });
-        defer terminal_box.deinit();
+        // Note: No defer deinit() - DVUI manages widget lifecycle
 
-        // Try to create simple labels for each line
-        // Start with just the first few lines to test
-        var row: u32 = 0;
-        const max_display_rows = @min(buffer.height, 10); // Limit to 10 rows for testing
+        // Get terminal buffer for rendering actual content
+        const buffer = &self.terminal.buffer;
 
-        while (row < max_display_rows) : (row += 1) {
-            var line_text = std.ArrayList(u8).init(self.allocator);
-            defer line_text.deinit();
-
-            // Build line text, limiting width to prevent overly long lines
-            var col: u32 = 0;
-            const max_display_cols = @min(buffer.width, 80); // Limit to 80 columns
-
-            while (col < max_display_cols) : (col += 1) {
-                if (buffer.getCell(row, col)) |cell| {
-                    const char_byte: u8 = @intCast(cell.char & 0xFF);
-                    if (char_byte >= 32 and char_byte < 127) { // Printable ASCII only
-                        try line_text.append(char_byte);
-                    } else {
-                        try line_text.append(' '); // Replace non-printable with space
+        // Debug: Count non-empty cells
+        var non_empty_count: u32 = 0;
+        for (0..buffer.height) |row| {
+            for (0..buffer.width) |col| {
+                if (buffer.getCell(@intCast(col), @intCast(row))) |cell| {
+                    if (cell.char != ' ' and cell.char != 0) {
+                        non_empty_count += 1;
                     }
-                } else {
-                    try line_text.append(' ');
                 }
             }
-
-            // Add cursor indicator if this is the cursor row
-            if (row == cursor_pos.y) {
-                try line_text.append('|'); // Simple cursor indicator
-            }
-
-            // Try to render this line as a label
-            // Use white text on black background
-            const line_str = try line_text.toOwnedSlice();
-            defer self.allocator.free(line_str);
-
-            try dvui.labelNoFmt(@src(), line_str, .{
-                .color_text = .{ .color = .{ .r = 0xFF, .g = 0xFF, .b = 0xFF } },
-            });
         }
 
-        std.log.debug("Rendered {} rows of terminal buffer", .{max_display_rows});
+        // Terminal status - using debug output to avoid SDL texture crashes
+        var status_buffer: [256]u8 = undefined;
+        const status_text = try std.fmt.bufPrint(&status_buffer, "Terminal: {} chars, Frame: {}, Cursor: {},{}",
+            .{ non_empty_count, self.frame_count, self.terminal.cursor_x, self.terminal.cursor_y });
+        
+        // Log status to console instead of rendering to avoid texture issues
+        if (self.frame_count % 60 == 0) {
+            std.log.debug("Status: {s}", .{status_text});
+        }
+
+        // Render the actual terminal buffer content - temporarily using safe rendering
+        try self.renderTerminalContentSafe();
+
+        // Log status occasionally
+        if (self.frame_count % 30 == 0) {
+            std.log.info("Rendered terminal with {} non-empty cells", .{non_empty_count});
+        }
+    }
+
+    /// Render the terminal buffer content safely without text labels
+    fn renderTerminalContentSafe(self: *Self) !void {
+        // Create a visual container for the terminal area
+        var terminal_container = try dvui.box(@src(), .vertical, .{
+            .id_extra = 10,
+            .expand = .both,
+            .color_fill = .{ .color = dvui.Color{ .r = 20, .g = 20, .b = 20 } }, // Dark terminal background
+            .margin = .{ .x = 10, .y = 10, .w = 10, .h = 10 },
+        });
+        defer terminal_container.deinit();
+
+        // Add a simple rectangle to represent terminal content
+        _ = try dvui.box(@src(), .horizontal, .{
+            .id_extra = 11,
+            .expand = .both,
+            .color_fill = .{ .color = dvui.Color{ .r = 0, .g = 30, .b = 0 } }, // Very dark green
+            .margin = .{ .x = 5, .y = 5, .w = 5, .h = 5 },
+            .min_size_content = .{ .w = 400, .h = 300 },
+        });
+
+        // Log terminal content to console for debugging
+        if (self.frame_count % 120 == 0) { // Every 2 seconds at 60fps
+            self.logTerminalContent();
+        }
+    }
+
+    /// Log terminal buffer content to console for debugging
+    fn logTerminalContent(self: *Self) void {
+        const buffer = &self.terminal.buffer;
+        var line_count: u32 = 0;
+        var char_count: u32 = 0;
+        
+        std.log.debug("=== Terminal Buffer Content ===", .{});
+        for (0..@min(buffer.height, 10)) |row| { // Show first 10 lines
+            var line_buffer: [128]u8 = undefined;
+            var line_pos: usize = 0;
+            var has_content = false;
+            
+            for (0..@min(buffer.width, 80)) |col| { // Show first 80 chars
+                if (buffer.getCell(@intCast(col), @intCast(row))) |cell| {
+                    const char = if (cell.char == 0) ' ' else @as(u8, @intCast(@min(cell.char, 255)));
+                    if (line_pos < line_buffer.len - 1) {
+                        line_buffer[line_pos] = if (char < 32 and char != 0) '?' else char;
+                        line_pos += 1;
+                        if (char != ' ' and char != 0) {
+                            has_content = true;
+                            char_count += 1;
+                        }
+                    }
+                }
+            }
+            
+            if (has_content) {
+                line_buffer[line_pos] = 0;
+                std.log.debug("Line {d}: '{s}'", .{ row, line_buffer[0..line_pos] });
+                line_count += 1;
+            }
+        }
+        
+        std.log.debug("Terminal: {d} lines with content, {d} total chars, cursor at ({d},{d})", 
+            .{ line_count, char_count, self.terminal.cursor_x, self.terminal.cursor_y });
+    }
+
+    /// Read output from PTY and process it through the terminal (Phase 6)
+    fn readPtyOutput(self: *Self) !void {
+        std.log.debug("readPtyOutput() called - checking for PTY data", .{});
+
+        // First check if data is available (non-blocking check)
+        if (!self.pty.hasData()) {
+            // Don't log every time, just occasionally for debugging
+            if (self.frame_count % 120 == 0) { // Log every 120 frames (about once every 2 seconds)
+                std.log.debug("PTY hasData() returned false - no data available (frame {})", .{self.frame_count});
+            }
+            return;
+        }
+
+        std.log.info("PTY hasData() returned true - attempting to read data!", .{});
+
+        // Read available data from PTY (should be non-blocking now)
+        var buffer: [4096]u8 = undefined;
+        const bytes_read = self.pty.read(buffer[0..]) catch |err| switch (err) {
+            error.WouldBlock => {
+                std.log.debug("PTY read would block despite hasData() == true", .{});
+                return;
+            },
+            else => {
+                std.log.warn("PTY read error: {any}", .{err});
+                return;
+            },
+        };
+
+        std.log.info("PTY read returned {d} bytes", .{bytes_read});
+
+        if (bytes_read > 0) {
+            std.log.info("SUCCESS! Read {d} bytes from PTY: '{s}'", .{ bytes_read, buffer[0..bytes_read] });
+
+            // Process the output through the terminal
+            self.terminal.processInput(buffer[0..bytes_read]) catch |err| {
+                std.log.warn("Terminal processing error: {any}", .{err});
+            };
+
+            std.log.info("Processed PTY output through terminal successfully", .{});
+        } else {
+            std.log.debug("PTY read returned 0 bytes", .{});
+        }
     }
 };
