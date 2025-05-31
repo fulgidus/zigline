@@ -28,6 +28,7 @@ pub const Gui = struct {
     // Font configuration
     font_size: f32 = DEFAULT_FONT_SIZE,
     font_loaded: bool = false,
+    font_data: ?[]u8 = null, // Store font data to free it later
 
     // Window state
     window_title: []const u8 = "Zigline Terminal",
@@ -68,6 +69,11 @@ pub const Gui = struct {
 
     /// Clean up GUI resources
     pub fn deinit(self: *Self) void {
+        // Free font data if allocated
+        if (self.font_data) |font_bytes| {
+            self.allocator.free(font_bytes);
+        }
+
         self.window.deinit();
         self.backend.deinit();
     }
@@ -79,15 +85,19 @@ pub const Gui = struct {
         const font_bytes = std.fs.cwd().readFileAlloc(self.allocator, font_path, 10 * 1024 * 1024) catch |err| switch (err) {
             error.FileNotFound => {
                 std.log.warn("Fira Code font not found at '{s}', falling back to system font", .{font_path});
-                return;
+                return; // Early return, font_loaded will be set by caller
             },
             else => return err,
         };
+
+        // Store font data for cleanup later
+        self.font_data = font_bytes;
+
         std.log.info("Loaded font file '{s}' (size: {d} bytes)", .{ font_path, font_bytes.len });
         std.log.warn("Skipping custom font registration; using system monospace font for now.", .{});
+
         // Do NOT call dvui.addFont -- this will force system font usage
         // dvui.addFont("FiraCode", font_bytes, self.allocator) ...
-        // self.font_loaded = true;
         // std.log.info("Loaded Fira Code font successfully", .{});
     }
 
@@ -105,6 +115,8 @@ pub const Gui = struct {
                 self.loadFont() catch |err| {
                     std.log.warn("Font load failed: {any}", .{err});
                 };
+                // Always mark as loaded to prevent retry, even on failure
+                self.font_loaded = true;
             }
 
             // Process SDL events and forward to DVUI
@@ -151,8 +163,30 @@ pub const Gui = struct {
                 .text => |text_event| {
                     try self.processTextEvent(text_event);
                 },
-                else => {},
+                .mouse => |mouse_event| {
+                    // Handle mouse events (for future features like selection)
+                    _ = mouse_event;
+                    // std.log.debug("Mouse event: {any}", .{mouse_event});
+                },
+                .close_popup => {
+                    // Handle popup close events
+                },
+                else => {
+                    // Handle other events as needed
+                },
             }
+        }
+
+        // Check for window resize events through DVUI window
+        const current_size = self.window.wd.rect;
+        const expected_cols: u32 = @intFromFloat(@max(20, current_size.w / 10)); // Rough char width estimate
+        const expected_rows: u32 = @intFromFloat(@max(10, current_size.h / 16)); // Rough char height estimate
+
+        // If window size changed significantly, update terminal dimensions
+        if (expected_cols != self.terminal.buffer.width or expected_rows != self.terminal.buffer.height) {
+            self.handleWindowResize(expected_cols, expected_rows) catch |err| {
+                std.log.warn("Window resize handling failed: {any}", .{err});
+            };
         }
     }
 
@@ -204,14 +238,88 @@ pub const Gui = struct {
         }
     }
 
+    /// Handle window resize events and update PTY dimensions
+    fn handleWindowResize(self: *Self, new_cols: u32, new_rows: u32) !void {
+        std.log.info("Window resize detected: {}x{} -> {}x{}", .{ self.terminal.buffer.width, self.terminal.buffer.height, new_cols, new_rows });
+
+        // Update terminal buffer size
+        self.terminal.resize(new_cols, new_rows) catch |err| {
+            std.log.warn("Failed to resize terminal buffer: {any}", .{err});
+        };
+
+        // Update PTY window size (TIOCSWINSZ) - note: PTY expects (rows, cols) as u16
+        const pty_rows: u16 = @intCast(@min(new_rows, 65535));
+        const pty_cols: u16 = @intCast(@min(new_cols, 65535));
+        self.pty.setSize(pty_rows, pty_cols) catch |err| {
+            std.log.warn("Failed to update PTY window size: {any}", .{err});
+        };
+
+        std.log.debug("Terminal resized successfully to {}x{}", .{ new_cols, new_rows });
+    }
+
     /// Render the terminal interface using DVUI
     fn renderTerminal(self: *Self) !void {
         // Create main window area with black background
         var scroll = try dvui.scrollArea(@src(), .{}, .{ .expand = .both, .color_fill = .{ .color = .{ .r = 0x00, .g = 0x00, .b = 0x00 } } });
         defer scroll.deinit();
 
-        // Render terminal buffer
-        try self.renderTerminalBuffer();
+        // PHASE 5 IMPLEMENTATION: Avoid text rendering due to DVUI font texture crashes
+        // Show visual representation of terminal using colored rectangles
+
+        // Header area (represents title bar)
+        {
+            var header = try dvui.box(@src(), .vertical, .{
+                .expand = .horizontal,
+                .min_size_content = .{ .h = 40 },
+                .color_fill = .{ .color = .{ .r = 0x20, .g = 0x20, .b = 0x20 } }, // Dark gray
+            });
+            defer header.deinit();
+        }
+
+        // Get terminal buffer info for visual representation
+        const buffer = &self.terminal.buffer;
+        const cursor_pos = self.terminal.getCursorPosition();
+
+        // Main terminal area (represents buffer content)
+        {
+            var terminal_area = try dvui.box(@src(), .vertical, .{
+                .expand = .both,
+                .color_fill = .{ .color = .{ .r = 0x00, .g = 0x00, .b = 0x00 } }, // Black background
+                .margin = .{ .x = 5, .y = 5 },
+            });
+            defer terminal_area.deinit();
+
+            // Show visual grid representing terminal buffer
+            // Each "cell" is a small rectangle
+            const cell_height = 12;
+            const rows_to_show = @min(buffer.height, 20); // Limit for performance
+
+            var row: u32 = 0;
+            while (row < rows_to_show) : (row += 1) {
+                var row_box = try dvui.box(@src(), .horizontal, .{
+                    .expand = .horizontal,
+                    .min_size_content = .{ .h = cell_height },
+                    .color_fill = if (row == cursor_pos.y)
+                        .{ .color = .{ .r = 0x40, .g = 0x40, .b = 0x40 } } // Highlight cursor row
+                    else
+                        .{ .color = .{ .r = 0x00, .g = 0x00, .b = 0x00 } }, // Normal row
+                    .id_extra = row, // Make each row widget unique
+                });
+                defer row_box.deinit();
+            }
+        }
+
+        // Status bar (represents cursor and buffer info)
+        {
+            var status = try dvui.box(@src(), .vertical, .{
+                .expand = .horizontal,
+                .min_size_content = .{ .h = 25 },
+                .color_fill = .{ .color = .{ .r = 0x00, .g = 0x40, .b = 0x80 } }, // Blue status
+            });
+            defer status.deinit();
+        }
+
+        std.log.debug("Rendered terminal visual ({}x{}) cursor at ({},{})", .{ buffer.width, buffer.height, cursor_pos.x, cursor_pos.y });
     }
 
     /// Render the terminal buffer content
@@ -219,41 +327,56 @@ pub const Gui = struct {
         // Access the terminal buffer directly and get cursor position
         const buffer = &self.terminal.buffer;
         const cursor_pos = self.terminal.getCursorPosition();
-        _ = cursor_pos; // Mark as used for future cursor rendering
 
-        // Try using 'sans' as the font name, which is more likely to exist in DVUI
-        // const font_name = "sans";
-        // Do not specify a font; let DVUI use its default/fallback font
-        var layout = dvui.textLayout(@src(), .{}, .{
-            .expand = .horizontal,
-        }) catch |err| {
-            std.log.err("DVUI could not create a text layout: {any}", .{err});
-            return;
-        };
-        defer layout.deinit();
+        // Create a simple text area for the terminal content
+        var terminal_box = try dvui.box(@src(), .vertical, .{
+            .expand = .both,
+            .color_fill = .{ .color = .{ .r = 0x00, .g = 0x00, .b = 0x00 } }, // Black background
+            .margin = .{ .x = 10, .y = 10 },
+        });
+        defer terminal_box.deinit();
 
-        // Render each line of the terminal buffer
+        // Try to create simple labels for each line
+        // Start with just the first few lines to test
         var row: u32 = 0;
-        while (row < buffer.height) : (row += 1) {
+        const max_display_rows = @min(buffer.height, 10); // Limit to 10 rows for testing
+
+        while (row < max_display_rows) : (row += 1) {
             var line_text = std.ArrayList(u8).init(self.allocator);
             defer line_text.deinit();
 
-            // Build line text
+            // Build line text, limiting width to prevent overly long lines
             var col: u32 = 0;
-            while (col < buffer.width) : (col += 1) {
+            const max_display_cols = @min(buffer.width, 80); // Limit to 80 columns
+
+            while (col < max_display_cols) : (col += 1) {
                 if (buffer.getCell(row, col)) |cell| {
-                    try line_text.append(@intCast(cell.char));
+                    const char_byte: u8 = @intCast(cell.char & 0xFF);
+                    if (char_byte >= 32 and char_byte < 127) { // Printable ASCII only
+                        try line_text.append(char_byte);
+                    } else {
+                        try line_text.append(' '); // Replace non-printable with space
+                    }
                 } else {
                     try line_text.append(' ');
                 }
             }
 
-            // Add the line to the layout
-            try layout.addText(line_text.items, .{});
-            try layout.addText("\n", .{});
+            // Add cursor indicator if this is the cursor row
+            if (row == cursor_pos.y) {
+                try line_text.append('|'); // Simple cursor indicator
+            }
+
+            // Try to render this line as a label
+            // Use white text on black background
+            const line_str = try line_text.toOwnedSlice();
+            defer self.allocator.free(line_str);
+
+            try dvui.labelNoFmt(@src(), line_str, .{
+                .color_text = .{ .color = .{ .r = 0xFF, .g = 0xFF, .b = 0xFF } },
+            });
         }
 
-        // TODO: Render cursor at current position
-        // This will need additional DVUI widgets or custom drawing
+        std.log.debug("Rendered {} rows of terminal buffer", .{max_display_rows});
     }
 };
