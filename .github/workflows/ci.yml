@@ -1,0 +1,179 @@
+name: CI/CD Pipeline
+
+# Trigger the pipeline on push to main, pull requests, and manual dispatch
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+# Set default permissions for the workflow
+permissions:
+  contents: read
+
+jobs:
+  # Security and dependency scanning job
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    # TODO: Add security scanning tools as the project grows
+    # - name: Run security scan
+    #   run: echo "Security scanning placeholder - implement as needed"
+
+  # Build and test job for multiple platforms
+  build-test:
+    name: Build and Test
+    strategy:
+      matrix:
+        # Cross-platform support: Windows, Linux, and macOS
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        zig-version: [0.13.0]
+        
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+    # Checkout the source code
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    # Setup Zig programming language
+    - name: Setup Zig
+      uses: goto-bus-stop/setup-zig@v2
+      with:
+        version: ${{ matrix.zig-version }}
+        
+    # Cache Zig build artifacts for faster builds
+    - name: Cache Zig build
+      uses: actions/cache@v3
+      with:
+        path: |
+          zig-cache
+          zig-out
+        key: ${{ runner.os }}-zig-${{ matrix.zig-version }}-${{ hashFiles('build.zig', 'src/**/*.zig') }}
+        restore-keys: |
+          ${{ runner.os }}-zig-${{ matrix.zig-version }}-
+          
+    # Verify Zig installation
+    - name: Verify Zig installation
+      run: zig version
+      
+    # Check code formatting
+    - name: Check code formatting
+      run: zig fmt --check src/
+      
+    # Build the project
+    - name: Build project
+      run: zig build
+      
+    # Run unit tests
+    - name: Run tests
+      run: zig build test
+      
+    # Build optimized release version
+    - name: Build release
+      run: zig build -Doptimize=ReleaseSafe
+      
+    # Upload build artifacts for release
+    - name: Upload build artifacts
+      if: matrix.os == 'ubuntu-latest'
+      uses: actions/upload-artifact@v3
+      with:
+        name: zigline-${{ runner.os }}-${{ github.sha }}
+        path: |
+          zig-out/bin/
+          !zig-out/bin/*.pdb
+        retention-days: 30
+
+  # Documentation and changelog validation
+  documentation:
+    name: Documentation Check
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    # Validate that required documentation files exist
+    - name: Check documentation files
+      run: |
+        echo "Checking required documentation files..."
+        test -f README.md || (echo "README.md missing" && exit 1)
+        test -f CHANGELOG.md || (echo "CHANGELOG.md missing" && exit 1)
+        test -f LICENSE || (echo "LICENSE missing" && exit 1)
+        test -f RELEASE_NOTES.md || (echo "RELEASE_NOTES.md missing" && exit 1)
+        echo "All documentation files present"
+        
+    # Validate changelog format
+    - name: Validate changelog format
+      run: |
+        echo "Validating CHANGELOG.md format..."
+        grep -q "# Changelog" CHANGELOG.md || (echo "Changelog title missing" && exit 1)
+        grep -q "## \[" CHANGELOG.md || (echo "Version entries missing" && exit 1)
+        echo "Changelog format validated"
+
+  # Release job - only runs on main branch with tags
+  release:
+    name: Create Release
+    if: github.ref == 'refs/heads/main' && startsWith(github.ref, 'refs/tags/v')
+    needs: [security, build-test, documentation]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    # Setup Zig for release build
+    - name: Setup Zig
+      uses: goto-bus-stop/setup-zig@v2
+      with:
+        version: 0.13.0
+        
+    # Build release artifacts for all platforms
+    - name: Build release artifacts
+      run: |
+        echo "Building release artifacts..."
+        # Linux x86_64
+        zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-linux
+        mkdir -p release/linux-x86_64
+        cp zig-out/bin/* release/linux-x86_64/
+        
+        # macOS x86_64
+        zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-macos
+        mkdir -p release/macos-x86_64
+        cp zig-out/bin/* release/macos-x86_64/
+        
+        # Windows x86_64
+        zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-windows
+        mkdir -p release/windows-x86_64
+        cp zig-out/bin/* release/windows-x86_64/
+        
+    # Create release archives
+    - name: Create release archives
+      run: |
+        cd release
+        tar -czf zigline-linux-x86_64.tar.gz linux-x86_64/
+        tar -czf zigline-macos-x86_64.tar.gz macos-x86_64/
+        zip -r zigline-windows-x86_64.zip windows-x86_64/
+        
+    # Extract version from tag
+    - name: Get version
+      id: get_version
+      run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+      
+    # Create GitHub release
+    - name: Create Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.get_version.outputs.version }}
+        release_name: Zigline ${{ steps.get_version.outputs.version }}
+        body_path: RELEASE_NOTES.md
+        draft: false
+        prerelease: true  # Mark as prerelease since it's experimental
