@@ -28,12 +28,12 @@ pub const Gui = struct {
     // Font configuration
     font_size: f32 = DEFAULT_FONT_SIZE,
     font_loaded: bool = false,
-    
+
     // Window state
     window_title: []const u8 = "Zigline Terminal",
-    
+
     const Self = @This();
-    
+
     /// Initialize the GUI with DVUI backend
     pub fn init(
         allocator: std.mem.Allocator,
@@ -49,12 +49,12 @@ pub const Gui = struct {
             .vsync = true,
             .title = "Zigline Terminal",
         });
-        
+
         // Initialize DVUI window
         const dvui_backend = backend.backend();
         const window = try dvui.Window.init(@src(), allocator, dvui_backend, .{});
-        
-        var gui = Self{
+
+        const gui = Self{
             .allocator = allocator,
             .backend = backend,
             .window = window,
@@ -62,19 +62,16 @@ pub const Gui = struct {
             .input_processor = input_processor,
             .pty = pty, // Store pty
         };
-        
-        // Load Fira Code font
-        try gui.loadFont();
-        
+
         return gui;
     }
-    
+
     /// Clean up GUI resources
     pub fn deinit(self: *Self) void {
         self.window.deinit();
         self.backend.deinit();
     }
-    
+
     /// Load Fira Code font for terminal rendering
     fn loadFont(self: *Self) !void {
         // Try to load the Fira Code font
@@ -86,60 +83,60 @@ pub const Gui = struct {
             },
             else => return err,
         };
-        
-        // Register the font with DVUI - note: font_bytes ownership transfers to DVUI
-        dvui.addFont("FiraCode", font_bytes, self.allocator) catch |err| switch (err) {
-            error.OutOfMemory => return err,
-            error.freetypeError => {
-                self.allocator.free(font_bytes);
-                std.log.warn("Failed to load Fira Code font: freetype error, falling back to system font", .{});
-                return;
-            },
-        };
-        
-        self.font_loaded = true;
-        std.log.info("Loaded Fira Code font successfully", .{});
+        std.log.info("Loaded font file '{s}' (size: {d} bytes)", .{ font_path, font_bytes.len });
+        std.log.warn("Skipping custom font registration; using system monospace font for now.", .{});
+        // Do NOT call dvui.addFont -- this will force system font usage
+        // dvui.addFont("FiraCode", font_bytes, self.allocator) ...
+        // self.font_loaded = true;
+        // std.log.info("Loaded Fira Code font successfully", .{});
     }
-    
+
     /// Main GUI render loop
     pub fn run(self: *Self) !void {
         main_loop: while (true) {
             // Begin frame timing for variable framerate
             const nstime = self.window.beginWait(self.backend.hasEvent());
-            
+
             // Mark beginning of DVUI frame
             try self.window.begin(nstime);
-            
+
+            // Load Fira Code font if not already loaded (must be inside DVUI frame)
+            if (!self.font_loaded) {
+                self.loadFont() catch |err| {
+                    std.log.warn("Font load failed: {any}", .{err});
+                };
+            }
+
             // Process SDL events and forward to DVUI
             const quit = try self.backend.addAllEvents(&self.window);
             if (quit) break :main_loop;
-            
+
             // Handle DVUI input events and forward to terminal
             try self.handleInput();
-            
+
             // Clear the frame
             _ = Backend.c.SDL_SetRenderDrawColor(self.backend.renderer, 0, 0, 0, 255);
             _ = Backend.c.SDL_RenderClear(self.backend.renderer);
-            
+
             // Render the terminal interface
             try self.renderTerminal();
-            
+
             // End DVUI frame
             const end_micros = try self.window.end(.{});
-            
+
             // Handle cursor and text input
             self.backend.setCursor(self.window.cursorRequested());
             self.backend.textInputRect(self.window.textInputRequested());
-            
+
             // Present the frame
             self.backend.renderPresent();
-            
+
             // Wait for next frame
             const wait_event_micros = self.window.waitTime(end_micros, null);
             self.backend.waitEventTimeout(wait_event_micros);
         }
     }
-    
+
     /// Handle input from DVUI and forward to terminal
     fn handleInput(self: *Self) !void {
         // Check for key events that DVUI captured
@@ -158,7 +155,7 @@ pub const Gui = struct {
             }
         }
     }
-    
+
     /// Process keyboard events and send to terminal
     fn processKeyEvent(self: *Self, key_event: dvui.Event.Key) !void {
         // Convert DVUI key to terminal input
@@ -172,66 +169,90 @@ pub const Gui = struct {
     /// Process text input events
     fn processTextEvent(self: *Self, text_event: dvui.Event.Text) !void {
         // try self.terminal.writeInput(text_event.text); // Old line
-        _ = try self.pty.write(text_event.text); // Changed to use pty.write
+        _ = try self.pty.write(text_event.txt); // Correct field name
     }
 
     /// Convert DVUI key events to terminal byte sequences
     fn dvuiKeyToBytes(self: *Self, key_event: dvui.Event.Key) ![]const u8 {
-        _ = self; // Mark as used
-        _ = key_event; // Mark as used for now
-        
-        // For now, let text events handle most input
-        // We'll implement special key handling after fixing the struct access
-        return "";
+        _ = self;
+
+        // Match on the key code field and DVUI enums
+        switch (key_event.code) {
+            dvui.enums.Key.enter => return "\r",
+            dvui.enums.Key.backspace => return "\x7f",
+            dvui.enums.Key.tab => return "\t",
+            dvui.enums.Key.escape => return "\x1b",
+
+            // Arrow Keys
+            dvui.enums.Key.up => return "\x1b[A",
+            dvui.enums.Key.down => return "\x1b[B",
+            dvui.enums.Key.right => return "\x1b[C",
+            dvui.enums.Key.left => return "\x1b[D",
+
+            // Other common special keys
+            dvui.enums.Key.delete => return "\x1b[3~",
+
+            else => {
+                // This function is primarily for special (non-printable) keys.
+                // Printable characters are expected to be handled by 'text' events.
+                // If a printable key event (e.g. 'a' key) arrives here,
+                // it means it wasn't processed as a text event, possibly due to modifiers
+                // or DVUI's event generation logic. For now, we return an empty sequence.
+                // std.log.debug("Unhandled key in dvuiKeyToBytes: {any}", .{key_event.key});
+                return "";
+            },
+        }
     }
-    
+
     /// Render the terminal interface using DVUI
     fn renderTerminal(self: *Self) !void {
         // Create main window area with black background
-        var scroll = try dvui.scrollArea(@src(), .{}, .{ 
-            .expand = .both, 
-            .color_fill = .{ .color = .{ .r = 0x00, .g = 0x00, .b = 0x00 } } 
-        });
+        var scroll = try dvui.scrollArea(@src(), .{}, .{ .expand = .both, .color_fill = .{ .color = .{ .r = 0x00, .g = 0x00, .b = 0x00 } } });
         defer scroll.deinit();
-        
+
         // Render terminal buffer
         try self.renderTerminalBuffer();
     }
-    
+
     /// Render the terminal buffer content
     fn renderTerminalBuffer(self: *Self) !void {
-        const buffer = self.terminal.getBuffer();
-        const cursor_pos = buffer.getCursorPosition();
+        // Access the terminal buffer directly and get cursor position
+        const buffer = &self.terminal.buffer;
+        const cursor_pos = self.terminal.getCursorPosition();
         _ = cursor_pos; // Mark as used for future cursor rendering
-        
-        // Use Fira Code font if loaded, otherwise fallback to system monospace
-        const font_name = if (self.font_loaded) "FiraCode" else "monospace";
-        
-        // Create a monospace layout for terminal text
-        var layout = try dvui.textLayout(@src(), .{}, .{
+
+        // Try using 'sans' as the font name, which is more likely to exist in DVUI
+        const font_name = "sans";
+        // Do not specify a font; let DVUI use its default/fallback font
+        var layout = dvui.textLayout(@src(), .{}, .{
             .expand = .horizontal,
-            .font_style = .{ .name = font_name, .size = self.font_size },
-        });
+        }) catch |err| {
+            std.log.err("DVUI could not create a text layout: {any}", .{err});
+            return;
+        };
         defer layout.deinit();
-        
+
         // Render each line of the terminal buffer
         var row: u32 = 0;
         while (row < buffer.height) : (row += 1) {
             var line_text = std.ArrayList(u8).init(self.allocator);
             defer line_text.deinit();
-            
+
             // Build line text
             var col: u32 = 0;
             while (col < buffer.width) : (col += 1) {
-                const cell = buffer.getCell(row, col);
-                try line_text.append(cell.char);
+                if (buffer.getCell(row, col)) |cell| {
+                    try line_text.append(@intCast(cell.char));
+                } else {
+                    try line_text.append(' ');
+                }
             }
-            
+
             // Add the line to the layout
             try layout.addText(line_text.items, .{});
             try layout.addText("\n", .{});
         }
-        
+
         // TODO: Render cursor at current position
         // This will need additional DVUI widgets or custom drawing
     }

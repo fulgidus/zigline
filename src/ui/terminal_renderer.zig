@@ -29,14 +29,14 @@ pub const TerminalRenderer = struct {
     /// Render the terminal buffer to the current DVUI context
     pub fn render(self: *Self, src: std.builtin.SourceLocation) !void {
         // Create a scroll area for the terminal content
-        var scroll = try dvui.scrollArea(src, .{}, .{ 
-            .expand = .both, 
+        var scroll = try dvui.scrollArea(src, .{}, .{
+            .expand = .both,
             .color_fill = .{ .color = .{ .r = 0, .g = 0, .b = 0 } }, // Black background
         });
         defer scroll.deinit();
 
         // Create a box for the terminal content
-        var terminal_box = try dvui.box(src, .vertical, .{ 
+        var terminal_box = try dvui.box(src, .vertical, .{
             .expand = .both,
             .padding = .{ .x = 4, .y = 4 },
         });
@@ -55,7 +55,7 @@ pub const TerminalRenderer = struct {
 
     /// Render a single line of the terminal buffer
     fn renderLine(self: *Self, src: std.builtin.SourceLocation, row: usize) !void {
-        var line_box = try dvui.box(src, .horizontal, .{ 
+        var line_box = try dvui.box(src, .horizontal, .{
             .expand = .horizontal,
             .min_size_content = .{ .h = self.font_size + self.line_spacing },
         });
@@ -68,11 +68,11 @@ pub const TerminalRenderer = struct {
         var col: usize = 0;
         while (col < self.buffer.width) {
             const cell = self.buffer.getCell(col, row);
-            
+
             // Add character to line text
             const char_bytes = [_]u8{cell.char};
             try line_text.appendSlice(&char_bytes);
-            
+
             col += 1;
         }
 
@@ -93,7 +93,7 @@ pub const TerminalRenderer = struct {
         // For now, we'll render the cursor as a simple overlay
         // This is a simplified implementation - in a full terminal emulator,
         // you'd want to position the cursor precisely over the character
-        
+
         // Calculate cursor position (simplified)
         const cursor_x = @as(f32, @floatFromInt(self.buffer.cursor_x)) * self.font_size * 0.6; // Approximate char width
         const cursor_y = @as(f32, @floatFromInt(self.buffer.cursor_y)) * (self.font_size + self.line_spacing);
@@ -117,10 +117,10 @@ pub const TerminalRenderer = struct {
         // Calculate new terminal dimensions based on character size
         const char_width = self.font_size * 0.6; // Approximate character width
         const char_height = self.font_size + self.line_spacing;
-        
+
         const cols = @as(usize, @intFromFloat(@as(f32, @floatFromInt(new_width)) / char_width));
         const rows = @as(usize, @intFromFloat(@as(f32, @floatFromInt(new_height)) / char_height));
-        
+
         // Resize the terminal buffer
         try self.buffer.resize(cols, rows);
     }
@@ -128,7 +128,7 @@ pub const TerminalRenderer = struct {
     /// Convert DVUI input events to terminal input
     pub fn handleInput(self: *Self, event: dvui.Event) ?[]const u8 {
         _ = self;
-        
+
         switch (event.evt) {
             .key => |key_event| {
                 if (key_event.action == .down or key_event.action == .repeat) {
@@ -140,14 +140,14 @@ pub const TerminalRenderer = struct {
             },
             else => {},
         }
-        
+
         return null;
     }
 
     /// Convert DVUI key events to terminal input sequences
     fn keyToTerminalInput(self: *Self, key_event: dvui.Event.Key) ?[]const u8 {
         _ = self;
-        
+
         // Convert common keys to ANSI escape sequences
         switch (key_event.key) {
             .up => return "\x1B[A",
