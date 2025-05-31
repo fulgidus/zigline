@@ -222,7 +222,7 @@ pub const Gui = struct {
         _ = cursor_pos; // Mark as used for future cursor rendering
 
         // Try using 'sans' as the font name, which is more likely to exist in DVUI
-        const font_name = "sans";
+        // const font_name = "sans";
         // Do not specify a font; let DVUI use its default/fallback font
         var layout = dvui.textLayout(@src(), .{}, .{
             .expand = .horizontal,
