@@ -53,7 +53,7 @@ pub const TerminalRenderer = struct {
         }
     }
 
-    /// Render a single line of the terminal buffer
+    /// Render a single line of the terminal buffer with color and style
     fn renderLine(self: *Self, src: std.builtin.SourceLocation, row: usize) !void {
         var line_box = try dvui.box(src, .horizontal, .{
             .expand = .horizontal,
@@ -61,43 +61,51 @@ pub const TerminalRenderer = struct {
         });
         defer line_box.deinit();
 
-        // Build the line text and collect style information
-        var line_text = std.ArrayList(u8).init(std.heap.page_allocator);
-        defer line_text.deinit();
-
         var col: usize = 0;
         while (col < self.buffer.width) {
-            const cell = self.buffer.getCell(col, row);
-
-            // Add character to line text
-            const char_bytes = [_]u8{cell.char};
-            try line_text.appendSlice(&char_bytes);
-
+            if (self.buffer.getCell(@intCast(col), @intCast(row))) |cell| {
+                // Map terminal color to DVUI color
+                const fg = colorToDvui(cell.fg_color);
+                const bg = colorToDvui(cell.bg_color);
+                
+                // Render each character as a label with its style
+                const char_byte = @as(u8, @intCast(@min(cell.char, 255)));
+                const char_bytes = [_]u8{char_byte};
+                try dvui.labelNoFmt(src, &char_bytes, .{
+                    .font_style = .{ .size = self.font_size },
+                    .color_text = .{ .color = fg },
+                    .color_fill = .{ .color = bg },
+                    .expand = .none,
+                });
+            }
             col += 1;
         }
+    }
 
-        // Render the line as a single text label for now
-        // TODO: Implement proper color and style rendering per character
-        const line_str = try line_text.toOwnedSlice();
-        defer std.heap.page_allocator.free(line_str);
-
-        try dvui.labelNoFmt(src, line_str, .{
-            .font_style = .{ .size = self.font_size },
-            .color_text = .{ .color = .{ .r = 255, .g = 255, .b = 255 } }, // White text
-            .expand = .horizontal,
-        });
+    /// Map terminal buffer color to DVUI color
+    fn colorToDvui(color: terminal.TerminalBuffer.Color) dvui.Color {
+        return switch (color) {
+            .black => dvui.Color{ .r = 0, .g = 0, .b = 0 },
+            .red => dvui.Color{ .r = 205, .g = 49, .b = 49 },
+            .green => dvui.Color{ .r = 13, .g = 188, .b = 121 },
+            .yellow => dvui.Color{ .r = 229, .g = 229, .b = 16 },
+            .blue => dvui.Color{ .r = 36, .g = 114, .b = 200 },
+            .magenta => dvui.Color{ .r = 188, .g = 63, .b = 188 },
+            .cyan => dvui.Color{ .r = 17, .g = 168, .b = 205 },
+            .white => dvui.Color{ .r = 229, .g = 229, .b = 229 },
+            .bright_black => dvui.Color{ .r = 102, .g = 102, .b = 102 },
+            .bright_red => dvui.Color{ .r = 241, .g = 76, .b = 76 },
+            .bright_green => dvui.Color{ .r = 35, .g = 209, .b = 139 },
+            .bright_yellow => dvui.Color{ .r = 245, .g = 245, .b = 67 },
+            .bright_blue => dvui.Color{ .r = 59, .g = 142, .b = 234 },
+            .bright_magenta => dvui.Color{ .r = 214, .g = 112, .b = 214 },
+            .bright_cyan => dvui.Color{ .r = 41, .g = 184, .b = 219 },
+            .bright_white => dvui.Color{ .r = 255, .g = 255, .b = 255 },
+        };
     }
 
     /// Render the cursor at its current position
     fn renderCursor(self: *Self, src: std.builtin.SourceLocation) !void {
-        // For now, we'll render the cursor as a simple overlay
-        // This is a simplified implementation - in a full terminal emulator,
-        // you'd want to position the cursor precisely over the character
-
-        // Calculate cursor position (simplified)
-        const cursor_x = @as(f32, @floatFromInt(self.buffer.cursor_x)) * self.font_size * 0.6; // Approximate char width
-        const cursor_y = @as(f32, @floatFromInt(self.buffer.cursor_y)) * (self.font_size + self.line_spacing);
-
         // Create a cursor overlay (simplified implementation)
         var cursor_overlay = try dvui.overlay(src, .{
             .min_size_content = .{ .w = 2, .h = self.font_size },
@@ -127,8 +135,6 @@ pub const TerminalRenderer = struct {
 
     /// Convert DVUI input events to terminal input
     pub fn handleInput(self: *Self, event: dvui.Event) ?[]const u8 {
-        _ = self;
-
         switch (event.evt) {
             .key => |key_event| {
                 if (key_event.action == .down or key_event.action == .repeat) {
@@ -146,7 +152,7 @@ pub const TerminalRenderer = struct {
 
     /// Convert DVUI key events to terminal input sequences
     fn keyToTerminalInput(self: *Self, key_event: dvui.Event.Key) ?[]const u8 {
-        _ = self;
+        _ = self; // Self not used in this simple implementation
 
         // Convert common keys to ANSI escape sequences
         switch (key_event.key) {

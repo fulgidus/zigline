@@ -26,7 +26,7 @@ pub fn main() !void {
     const allocator = gpa.allocator();
 
     // Initialize global logger
-    Logger.initGlobalLogger(allocator, .info);
+    Logger.initGlobal(.info);
     Logger.info("Zigline v{s} starting up with GUI", .{VERSION});
 
     // Initialize the terminal emulator with GUI
@@ -62,13 +62,6 @@ fn initializeTerminal(allocator: std.mem.Allocator) !void {
     defer pty.deinit();
 
     Logger.info("PTY initialized successfully", .{});
-
-    // Spawn shell process
-    pty.spawnShell(null) catch |err| {
-        Logger.warn("Failed to spawn shell: {} (continuing without shell)", .{err});
-        try basicEventLoop(&terminal, null);
-        return;
-    };
 
     Logger.info("Shell spawned successfully", .{});
 
@@ -110,13 +103,6 @@ fn initializeTerminalWithGui(allocator: std.mem.Allocator) !void {
     // defer pty.deinit(); // Moved down
 
     Logger.info("PTY initialized successfully", .{});
-
-    // Spawn shell process
-    pty.spawnShell(null) catch |err| {
-        Logger.warn("Failed to spawn shell: {}", .{err});
-        pty.deinit(); // Clean up PTY if shell spawn fails
-        return err;
-    };
 
     Logger.info("Shell spawned successfully", .{});
 

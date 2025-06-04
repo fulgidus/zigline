@@ -7,7 +7,7 @@ const Buffer = @import("../terminal/buffer.zig").Buffer;
 const AnsiParser = @import("../terminal/ansi.zig").AnsiParser;
 const InputProcessor = @import("../input/processor.zig").InputProcessor;
 const Terminal = @import("../core/terminal.zig").Terminal;
-const PTY = @import("../core/pty.zig").PTY; // Added PTY import
+const PTY = @import("../core/pty.zig").PTY;
 
 /// DVUI backend type alias
 const Backend = dvui.backend;
@@ -19,7 +19,7 @@ pub const Gui = struct {
     window: dvui.Window,
     terminal: *Terminal,
     input_processor: ?*InputProcessor,
-    pty: *PTY, // Added pty field
+    pty: *PTY,
 
     initial_test_sent: bool = false, // Flag to send initial test command
 
@@ -32,11 +32,12 @@ pub const Gui = struct {
     const Self = @This();
 
     /// Initialize the GUI with DVUI backend
+    /// Creates window, initializes DVUI, and sets up event handling
     pub fn init(
         allocator: std.mem.Allocator,
         terminal: *Terminal,
         input_processor: ?*InputProcessor,
-        pty: *PTY, // Added pty argument
+        pty: *PTY,
     ) !Self {
         // Note: SDL_VIDEODRIVER=x11 should be set via run_x11.sh script
         
@@ -77,12 +78,14 @@ pub const Gui = struct {
     }
 
     /// Clean up GUI resources
+    /// Deinitializes DVUI window and SDL backend
     pub fn deinit(self: *Self) void {
         self.window.deinit();
         self.backend.deinit();
     }
 
     /// Main GUI render loop
+    /// Handles events, rendering, and PTY communication
     pub fn run(self: *Self) !void {
         std.log.info("Starting main GUI render loop...", .{});
         
@@ -144,6 +147,7 @@ pub const Gui = struct {
     }
 
     /// Handle input from DVUI and forward to terminal
+    /// Processes keyboard, text, and mouse events
     fn handleInput(self: *Self) !void {
         // Check for key events that DVUI captured
         const events = dvui.events();
@@ -214,6 +218,7 @@ pub const Gui = struct {
     }
 
     /// Process keyboard events and send to terminal
+    /// Converts DVUI key events to ANSI sequences for PTY
     fn processKeyEvent(self: *Self, key_event: dvui.Event.Key) !void {
         std.log.info("Key event detected: {any}", .{key_event});
         // Convert DVUI key to terminal input
@@ -227,6 +232,7 @@ pub const Gui = struct {
     }
 
     /// Process text input events
+    /// Sends typed text directly to PTY
     fn processTextEvent(self: *Self, text_event: dvui.Event.Text) !void {
         std.log.info("Text event detected: '{s}'", .{text_event.txt});
         // try self.terminal.writeInput(text_event.text); // Old line
@@ -234,6 +240,7 @@ pub const Gui = struct {
     }
 
     /// Convert DVUI key events to terminal byte sequences
+    /// Maps special keys to ANSI escape sequences for terminal compatibility
     fn dvuiKeyToBytes(self: *Self, key_event: dvui.Event.Key) ![]const u8 {
         _ = self;
 
@@ -285,16 +292,16 @@ pub const Gui = struct {
         std.log.info("Window resize detected: {}x{} -> {}x{}", .{ self.terminal.buffer.width, self.terminal.buffer.height, new_cols, new_rows });
 
         // Update terminal buffer size
-        self.terminal.resize(new_cols, new_rows) catch |err| {
+        const term_cols: u16 = @intCast(@min(new_cols, 65535));
+        const term_rows: u16 = @intCast(@min(new_rows, 65535));
+        self.terminal.resize(term_cols, term_rows) catch |err| {
             std.log.warn("Failed to resize terminal buffer: {any}", .{err});
         };
 
-        // Update PTY window size (TIOCSWINSZ) - note: PTY expects (rows, cols) as u16
+        // Update PTY window size (TIOCSWINSZ) - note: PTY expects (cols, rows) as u16
         const pty_rows: u16 = @intCast(@min(new_rows, 65535));
         const pty_cols: u16 = @intCast(@min(new_cols, 65535));
-        self.pty.setSize(pty_rows, pty_cols) catch |err| {
-            std.log.warn("Failed to update PTY window size: {any}", .{err});
-        };
+        self.pty.resize(pty_cols, pty_rows);
 
         std.log.debug("Terminal resized successfully to {}x{}", .{ new_cols, new_rows });
     }
@@ -446,7 +453,7 @@ pub const Gui = struct {
             std.log.info("SUCCESS! Read {d} bytes from PTY: '{s}'", .{ bytes_read, buffer[0..bytes_read] });
 
             // Process the output through the terminal
-            self.terminal.processInput(buffer[0..bytes_read]) catch |err| {
+            self.terminal.processData(buffer[0..bytes_read]) catch |err| {
                 std.log.warn("Terminal processing error: {any}", .{err});
             };
 
