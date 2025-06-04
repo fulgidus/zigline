@@ -30,7 +30,6 @@ Thumbs.db
 *.backup
 
 # Core dumps
-core
 core.*
 
 # Profiling and debugging
