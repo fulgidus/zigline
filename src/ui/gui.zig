@@ -22,6 +22,7 @@ pub const Gui = struct {
     pty: *PTY,
 
     initial_test_sent: bool = false, // Flag to send initial test command
+    should_exit: bool = false, // Exit flag for clean shutdown
 
     // Frame counting for debugging
     frame_count: u64 = 0,
@@ -98,8 +99,7 @@ pub const Gui = struct {
     pub fn run(self: *Self) !void {
         std.log.info("Starting main GUI render loop...", .{});
 
-        var should_exit = false;
-        main_loop: while (!should_exit) {
+        main_loop: while (!self.should_exit) {
             // Increment frame counter for debugging
             self.frame_count += 1;
 
@@ -111,7 +111,7 @@ pub const Gui = struct {
             // Check if child process is still alive - exit if dead
             if (!self.pty.isChildAlive()) {
                 std.log.warn("Child shell process has died - initiating shutdown", .{});
-                should_exit = true;
+                self.should_exit = true;
                 break :main_loop;
             }
 
@@ -143,14 +143,14 @@ pub const Gui = struct {
             const quit = try self.backend.addAllEvents(&self.window);
             if (quit) {
                 std.log.info("Quit event received, setting exit flag", .{});
-                should_exit = true;
+                self.should_exit = true;
                 continue; // Continue to properly end the frame
             }
 
             // Check for DVUI close events and window size
             if (self.window.wd.rect.w == 0 or self.window.wd.rect.h == 0) {
                 std.log.info("Window closed (zero dimensions), setting exit flag", .{});
-                should_exit = true;
+                self.should_exit = true;
                 continue; // Continue to properly end the frame
             }
 
@@ -160,14 +160,10 @@ pub const Gui = struct {
                 switch (event.evt) {
                     .key => |key_event| {
                         if (key_event.action == .down and key_event.code == dvui.enums.Key.escape) {
-                            // Check if Cmd+ESC or Ctrl+ESC to quit (on macOS use Cmd, others use Ctrl)
-                            if (key_event.mod.has(.lcommand) or key_event.mod.has(.rcommand) or
-                                key_event.mod.has(.lcontrol) or key_event.mod.has(.rcontrol))
-                            {
-                                std.log.info("Cmd/Ctrl+ESC detected, setting exit flag", .{});
-                                should_exit = true;
-                                continue; // Continue to properly end the frame
-                            }
+                            // ESC key quits immediately for testing
+                            std.log.info("ESC key detected - setting exit flag", .{});
+                            self.should_exit = true;
+                            continue; // Continue to properly end the frame
                         }
                     },
                     else => {},
@@ -175,7 +171,7 @@ pub const Gui = struct {
             }
 
             // If exit was requested, break after properly ending the frame
-            if (should_exit) {
+            if (self.should_exit) {
                 std.log.info("Exit requested, ending frame and breaking loop", .{});
                 
                 // Properly end the DVUI frame before exiting
@@ -191,12 +187,12 @@ pub const Gui = struct {
                 std.log.warn("Input handling error: {any} - continuing", .{err});
             };
 
-            // Clear the frame
-            _ = Backend.c.SDL_SetRenderDrawColor(self.backend.renderer, 0, 0, 0, 255);
+            // Clear the frame with a more visible background color
+            _ = Backend.c.SDL_SetRenderDrawColor(self.backend.renderer, 50, 50, 50, 255);
             _ = Backend.c.SDL_RenderClear(self.backend.renderer);
 
-            // Render the terminal interface (font-free version)
-            self.renderTerminalNoText() catch |err| {
+            // Render the terminal interface (improved visual version)
+            self.renderTerminalVisual() catch |err| {
                 std.log.warn("Terminal rendering error: {any} - continuing", .{err});
             };
 
@@ -326,7 +322,40 @@ pub const Gui = struct {
     fn dvuiKeyToBytes(self: *Self, key_event: dvui.Event.Key) ![]const u8 {
         _ = self;
 
-        // Handle special keys first (basic functionality without modifiers for now)
+        // Handle Ctrl combinations first - these are critical for terminal control
+        if (key_event.mod.intersects(.{ .lcontrol = true }) or key_event.mod.intersects(.{ .rcontrol = true })) {
+            switch (key_event.code) {
+                dvui.enums.Key.a => return "\x01", // Ctrl+A
+                dvui.enums.Key.b => return "\x02", // Ctrl+B
+                dvui.enums.Key.c => return "\x03", // Ctrl+C (SIGINT)
+                dvui.enums.Key.d => return "\x04", // Ctrl+D (EOF)
+                dvui.enums.Key.e => return "\x05", // Ctrl+E
+                dvui.enums.Key.f => return "\x06", // Ctrl+F
+                dvui.enums.Key.g => return "\x07", // Ctrl+G
+                dvui.enums.Key.h => return "\x08", // Ctrl+H (Backspace)
+                dvui.enums.Key.i => return "\x09", // Ctrl+I (Tab)
+                dvui.enums.Key.j => return "\x0A", // Ctrl+J (Line Feed)
+                dvui.enums.Key.k => return "\x0B", // Ctrl+K
+                dvui.enums.Key.l => return "\x0C", // Ctrl+L (Clear screen)
+                dvui.enums.Key.m => return "\x0D", // Ctrl+M (Carriage Return)
+                dvui.enums.Key.n => return "\x0E", // Ctrl+N
+                dvui.enums.Key.o => return "\x0F", // Ctrl+O
+                dvui.enums.Key.p => return "\x10", // Ctrl+P
+                dvui.enums.Key.q => return "\x11", // Ctrl+Q
+                dvui.enums.Key.r => return "\x12", // Ctrl+R
+                dvui.enums.Key.s => return "\x13", // Ctrl+S
+                dvui.enums.Key.t => return "\x14", // Ctrl+T
+                dvui.enums.Key.u => return "\x15", // Ctrl+U
+                dvui.enums.Key.v => return "\x16", // Ctrl+V
+                dvui.enums.Key.w => return "\x17", // Ctrl+W
+                dvui.enums.Key.x => return "\x18", // Ctrl+X
+                dvui.enums.Key.y => return "\x19", // Ctrl+Y
+                dvui.enums.Key.z => return "\x1A", // Ctrl+Z (SIGTSTP)
+                else => {},
+            }
+        }
+
+        // Handle special keys (basic functionality without modifiers)
         switch (key_event.code) {
             dvui.enums.Key.enter => return "\r",
             dvui.enums.Key.backspace => return "\x7f",
@@ -363,6 +392,55 @@ pub const Gui = struct {
             dvui.enums.Key.page_down => return "\x1b[6~",
             dvui.enums.Key.insert => return "\x1b[2~",
             dvui.enums.Key.delete => return "\x1b[3~",
+
+            // Basic alphanumeric keys - only if no modifiers
+            dvui.enums.Key.a => return if (key_event.mod.isEmpty()) "a" else "",
+            dvui.enums.Key.b => return if (key_event.mod.isEmpty()) "b" else "",
+            dvui.enums.Key.c => return if (key_event.mod.isEmpty()) "c" else "",
+            dvui.enums.Key.d => return if (key_event.mod.isEmpty()) "d" else "",
+            dvui.enums.Key.e => return if (key_event.mod.isEmpty()) "e" else "",
+            dvui.enums.Key.f => return if (key_event.mod.isEmpty()) "f" else "",
+            dvui.enums.Key.g => return if (key_event.mod.isEmpty()) "g" else "",
+            dvui.enums.Key.h => return if (key_event.mod.isEmpty()) "h" else "",
+            dvui.enums.Key.i => return if (key_event.mod.isEmpty()) "i" else "",
+            dvui.enums.Key.j => return if (key_event.mod.isEmpty()) "j" else "",
+            dvui.enums.Key.k => return if (key_event.mod.isEmpty()) "k" else "",
+            dvui.enums.Key.l => return if (key_event.mod.isEmpty()) "l" else "",
+            dvui.enums.Key.m => return if (key_event.mod.isEmpty()) "m" else "",
+            dvui.enums.Key.n => return if (key_event.mod.isEmpty()) "n" else "",
+            dvui.enums.Key.o => return if (key_event.mod.isEmpty()) "o" else "",
+            dvui.enums.Key.p => return if (key_event.mod.isEmpty()) "p" else "",
+            dvui.enums.Key.q => return if (key_event.mod.isEmpty()) "q" else "",
+            dvui.enums.Key.r => return if (key_event.mod.isEmpty()) "r" else "",
+            dvui.enums.Key.s => return if (key_event.mod.isEmpty()) "s" else "",
+            dvui.enums.Key.t => return if (key_event.mod.isEmpty()) "t" else "",
+            dvui.enums.Key.u => return if (key_event.mod.isEmpty()) "u" else "",
+            dvui.enums.Key.v => return if (key_event.mod.isEmpty()) "v" else "",
+            dvui.enums.Key.w => return if (key_event.mod.isEmpty()) "w" else "",
+            dvui.enums.Key.x => return if (key_event.mod.isEmpty()) "x" else "",
+            dvui.enums.Key.y => return if (key_event.mod.isEmpty()) "y" else "",
+            dvui.enums.Key.z => return if (key_event.mod.isEmpty()) "z" else "",
+            dvui.enums.Key.space => return " ",
+            
+            // Numbers
+            dvui.enums.Key.zero => return "0",
+            dvui.enums.Key.one => return "1",
+            dvui.enums.Key.two => return "2",
+            dvui.enums.Key.three => return "3",
+            dvui.enums.Key.four => return "4",
+            dvui.enums.Key.five => return "5",
+            dvui.enums.Key.six => return "6",
+            dvui.enums.Key.seven => return "7",
+            dvui.enums.Key.eight => return "8",
+            dvui.enums.Key.nine => return "9",
+
+            // Control keys that don't produce output but are important for terminal
+            dvui.enums.Key.left_control,
+            dvui.enums.Key.right_control,
+            dvui.enums.Key.left_shift,
+            dvui.enums.Key.right_shift,
+            dvui.enums.Key.left_alt,
+            dvui.enums.Key.right_alt => return "",
 
             else => {
                 // For unhandled keys, let text events handle them
@@ -687,144 +765,116 @@ pub const Gui = struct {
     }
 
     /// Render terminal state using colored rectangles instead of text (font-free)
-    /// This avoids the font texture creation issues
-    fn renderTerminalNoText(self: *Self) !void {
-        // Create main terminal container with visible background
-        var terminal_container = try dvui.box(@src(), .vertical, .{
-            .id_extra = 100, // Unique ID for main container
+    /// This version uses larger, more visible elements for debugging
+    fn renderTerminalVisual(self: *Self) !void {
+        // Create main terminal container with a bright visible background
+        var main_container = try dvui.box(@src(), .vertical, .{
             .expand = .both,
             .background = true,
-            .color_fill = .{ .color = dvui.Color{ .r = 40, .g = 40, .b = 40 } }, // Dark gray background
+            .color_fill = .{ .color = dvui.Color{ .r = 30, .g = 30, .b = 30 } }, // Dark gray background
             .margin = .{ .x = 10, .y = 10, .w = 10, .h = 10 },
+            .id_extra = 20000, // Unique ID for main container
         });
-        defer terminal_container.deinit();
+        defer main_container.deinit();
 
-        // Title bar with unique ID
-        var title_box = try dvui.box(@src(), .horizontal, .{
-            .id_extra = 101, // Unique ID for title
-            .expand = .horizontal,
-            .min_size_content = .{ .w = 0, .h = 30 },
-            .background = true,
-            .color_fill = .{ .color = dvui.Color{ .r = 60, .g = 120, .b = 200 } }, // Blue title bar
-            .margin = .{ .x = 2, .y = 2, .w = 2, .h = 2 },
-        });
-        defer title_box.deinit();
-
-        // Status indicator in title
-        var status_indicator = try dvui.box(@src(), .horizontal, .{
-            .id_extra = 102, // Unique ID for status
-            .min_size_content = .{ .w = 20, .h = 20 },
-            .background = true,
-            .color_fill = .{ .color = if (self.pty.isChildAlive()) dvui.Color{ .r = 0, .g = 255, .b = 0 } else dvui.Color{ .r = 255, .g = 0, .b = 0 } },
-            .margin = .{ .x = 5, .y = 5, .w = 5, .h = 5 },
-        });
-        defer status_indicator.deinit();
-
-        // Terminal content area with scrollable region
-        var content_box = try dvui.box(@src(), .vertical, .{
-            .id_extra = 103, // Unique ID for content
-            .expand = .both,
-            .background = true,
-            .color_fill = .{ .color = dvui.Color{ .r = 20, .g = 20, .b = 20 } }, // Dark terminal background
-            .margin = .{ .x = 5, .y = 5, .w = 5, .h = 5 },
-        });
-        defer content_box.deinit();
-
-        // Render character grid visualization
         const buffer = &self.terminal.buffer;
         var visible_chars: u32 = 0;
 
-        // Show first 8 lines of terminal content as colored boxes
-        for (0..@min(buffer.height, 8)) |row| {
+        // Show first 6 lines with larger boxes for better visibility
+        for (0..@min(buffer.height, 6)) |row| {
             var line_box = try dvui.box(@src(), .horizontal, .{
-                .id_extra = @as(u32, @intCast(200 + row)), // Unique ID for each line
                 .expand = .horizontal,
-                .min_size_content = .{ .w = 0, .h = 16 },
-                .margin = .{ .x = 1, .y = 1, .w = 1, .h = 1 },
+                .min_size_content = .{ .w = 0, .h = 24 },
+                .margin = .{ .x = 2, .y = 2, .w = 2, .h = 2 },
+                .id_extra = @as(u32, @intCast(row)),
             });
             defer line_box.deinit();
 
-            // Show first 20 characters of each line as small boxes
-            for (0..@min(buffer.width, 20)) |col| {
+            // Show first 15 characters with larger boxes
+            for (0..@min(buffer.width, 15)) |col| {
                 if (buffer.getCell(@intCast(col), @intCast(row))) |cell| {
                     const has_char = cell.char != 0 and cell.char != ' ';
                     if (has_char) visible_chars += 1;
 
                     var char_box = try dvui.box(@src(), .horizontal, .{
-                        .id_extra = @as(u32, @intCast(1000 + row * 100 + col)), // Unique ID for each character position
-                        .min_size_content = .{ .w = 8, .h = 14 },
+                        .min_size_content = .{ .w = 16, .h = 20 },
                         .background = true,
                         .color_fill = .{
                             .color = if (has_char)
-                                dvui.Color{ .r = 200, .g = 200, .b = 200 } // Light gray for characters
+                                dvui.Color{ .r = 220, .g = 220, .b = 220 } // Almost white for characters
                             else
-                                dvui.Color{ .r = 60, .g = 60, .b = 60 },
-                        }, // Dark gray for empty spaces
-                        .margin = .{ .x = 1, .y = 0, .w = 0, .h = 0 },
+                                dvui.Color{ .r = 80, .g = 80, .b = 80 }, // Medium gray for empty
+                        },
+                        .margin = .{ .x = 2, .y = 1, .w = 2, .h = 1 },
+                        .id_extra = @as(u32, @intCast(row * 100 + col)),
                     });
                     defer char_box.deinit();
                 }
             }
         }
 
-        // Cursor indicator
-        const cursor_visible = (self.frame_count / 30) % 2 == 0; // Blink every 30 frames
-        if (cursor_visible and self.terminal.cursor_y < 8 and self.terminal.cursor_x < 20) {
+        // Cursor indicator - make it very visible and blinking
+        const cursor_visible = (self.frame_count / 20) % 2 == 0; // Faster blink
+        if (cursor_visible and self.terminal.cursor_y < 6 and self.terminal.cursor_x < 15) {
             var cursor_box = try dvui.box(@src(), .horizontal, .{
-                .id_extra = 9999, // Unique ID for cursor
-                .min_size_content = .{ .w = 8, .h = 14 },
+                .min_size_content = .{ .w = 16, .h = 20 },
                 .background = true,
-                .color_fill = .{ .color = dvui.Color{ .r = 255, .g = 255, .b = 0 } }, // Yellow cursor
-                .margin = .{ .x = 1, .y = 1, .w = 1, .h = 1 },
+                .color_fill = .{ .color = dvui.Color{ .r = 255, .g = 255, .b = 0 } }, // Bright yellow cursor
+                .margin = .{ .x = 2, .y = 1, .w = 2, .h = 1 },
+                .id_extra = 9999, // Unique ID for cursor
             });
             defer cursor_box.deinit();
         }
 
-        // Bottom status bar
+        // Bottom status bar with frame counter
         var bottom_status = try dvui.box(@src(), .horizontal, .{
-            .id_extra = 104, // Unique ID for bottom status
             .expand = .horizontal,
-            .min_size_content = .{ .w = 0, .h = 25 },
+            .min_size_content = .{ .w = 0, .h = 40 },
             .background = true,
-            .color_fill = .{ .color = dvui.Color{ .r = 80, .g = 80, .b = 80 } }, // Gray status bar
-            .margin = .{ .x = 2, .y = 2, .w = 2, .h = 2 },
+            .color_fill = .{ .color = dvui.Color{ .r = 120, .g = 120, .b = 120 } }, // Light gray status
+            .margin = .{ .x = 5, .y = 5, .w = 5, .h = 5 },
+            .id_extra = 10000, // Unique ID for status bar
         });
         defer bottom_status.deinit();
 
-        // Frame counter indicator (changes color every second)
-        const frame_color_cycle = (self.frame_count / 60) % 3; // Change every 60 frames (1 second)
+        // Frame counter - cycles through colors rapidly for visual feedback
+        const frame_color_cycle = (self.frame_count / 30) % 4; // Change every 30 frames
         var frame_indicator = try dvui.box(@src(), .horizontal, .{
-            .id_extra = 105, // Unique ID for frame indicator
-            .min_size_content = .{ .w = 30, .h = 15 },
+            .min_size_content = .{ .w = 60, .h = 30 },
             .background = true,
             .color_fill = .{
                 .color = switch (frame_color_cycle) {
-                    0 => dvui.Color{ .r = 255, .g = 100, .b = 100 }, // Red
-                    1 => dvui.Color{ .r = 100, .g = 255, .b = 100 }, // Green
-                    else => dvui.Color{ .r = 100, .g = 100, .b = 255 }, // Blue
+                    0 => dvui.Color{ .r = 255, .g = 120, .b = 120 }, // Light red
+                    1 => dvui.Color{ .r = 120, .g = 255, .b = 120 }, // Light green
+                    2 => dvui.Color{ .r = 120, .g = 120, .b = 255 }, // Light blue
+                    else => dvui.Color{ .r = 255, .g = 255, .b = 120 }, // Light yellow
                 },
             },
-            .margin = .{ .x = 5, .y = 5, .w = 5, .h = 5 },
+            .margin = .{ .x = 10, .y = 5, .w = 10, .h = 5 },
+            .id_extra = 10001, // Unique ID for frame indicator
         });
         defer frame_indicator.deinit();
 
-        // Character count indicator (width based on number of characters)
-        const char_width = @min(200, visible_chars * 2); // Width proportional to character count
+        // Character count indicator - proportional width
+        const char_width = @max(20, @min(300, visible_chars * 3));
         var char_counter = try dvui.box(@src(), .horizontal, .{
-            .id_extra = 106, // Unique ID for character counter
-            .min_size_content = .{ .w = @floatFromInt(char_width), .h = 15 },
+            .min_size_content = .{ .w = @floatFromInt(char_width), .h = 30 },
             .background = true,
             .color_fill = .{ .color = dvui.Color{ .r = 150, .g = 255, .b = 150 } }, // Light green
-            .margin = .{ .x = 5, .y = 5, .w = 5, .h = 5 },
+            .margin = .{ .x = 10, .y = 5, .w = 10, .h = 5 },
+            .id_extra = 10002, // Unique ID for character counter
         });
         defer char_counter.deinit();
 
-        // Log status occasionally
-        if (self.frame_count % 60 == 0) {
-            std.log.info("Rendered terminal visualization: {} visible chars, cursor at ({},{}), frame {}", .{ visible_chars, self.terminal.cursor_x, self.terminal.cursor_y, self.frame_count });
+        // Always log status for debugging
+        if (self.frame_count % 30 == 0) {
+            std.log.info("Visual render: {} chars visible, cursor at ({},{}), frame {}, PTY alive: {}", .{ 
+                visible_chars,
+                self.terminal.cursor_x,
+                self.terminal.cursor_y,
+                self.frame_count,
+                self.pty.isChildAlive(),
+            });
         }
-
-        // Read PTY data to keep it processing
-        try self.readPtyOutput();
     }
 };
