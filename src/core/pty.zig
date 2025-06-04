@@ -6,6 +6,11 @@ const os = std.os;
 const posix = std.posix;
 const Logger = @import("logger.zig");
 
+// C function declarations for PTY operations
+extern "c" fn grantpt(fd: c_int) c_int;
+extern "c" fn unlockpt(fd: c_int) c_int;
+extern "c" fn ptsname(fd: c_int) ?[*:0]u8;
+
 /// Errors that can occur during PTY operations
 pub const PTYError = error{
     OpenPTYFailed,
@@ -53,14 +58,14 @@ pub const PTY = struct {
     /// Clean up PTY resources
     pub fn deinit(self: *PTY) void {
         Logger.info("Cleaning up PTY resources", .{});
-        
+
         // Close file descriptors
         posix.close(self.master_fd);
         posix.close(self.slave_fd);
 
         // Terminate child process if still running
         _ = posix.waitpid(self.child_pid, 0);
-        
+
         Logger.info("PTY cleanup complete", .{});
     }
 
@@ -73,11 +78,11 @@ pub const PTY = struct {
                 return PTYError.ReadFailed;
             },
         };
-        
+
         if (bytes_read > 0) {
             Logger.debug("Read {d} bytes from PTY", .{bytes_read});
         }
-        
+
         return bytes_read;
     }
 
@@ -87,7 +92,7 @@ pub const PTY = struct {
             Logger.err("PTY write failed: {}", .{err});
             return PTYError.WriteFailed;
         };
-        
+
         Logger.debug("Wrote {d} bytes to PTY", .{bytes_written});
         return bytes_written;
     }
@@ -95,7 +100,7 @@ pub const PTY = struct {
     /// Resize PTY to match terminal window size
     pub fn resize(self: *PTY, cols: u16, rows: u16) void {
         Logger.debug("Resizing PTY to {}x{}", .{ cols, rows });
-        
+
         // Note: On macOS, resizing PTY would require proper ioctl calls
         // For now, this is a placeholder - in a production system you'd use
         // platform-specific ioctl calls to set the window size
@@ -109,40 +114,78 @@ pub const PTY = struct {
             error.WouldBlock => return false,
             else => return false,
         };
-        
+
         // If we read data, we need to "put it back" - this is a simple check
         // In a real implementation, you'd use select() or poll() to check availability
         return result > 0;
+    }
+
+    /// Check if the child shell process is still alive
+    pub fn isChildAlive(self: *PTY) bool {
+        const result = posix.waitpid(self.child_pid, 1); // 1 = WNOHANG on most systems
+
+        if (result.pid == 0) {
+            // Child is still running
+            return true;
+        } else if (result.pid == self.child_pid) {
+            // Child has exited
+            Logger.warn("Child process {d} has exited with status: {d}", .{ self.child_pid, result.status });
+            return false;
+        }
+
+        return false;
     }
 };
 
 /// Open PTY master device
 fn openPTYMaster() PTYError!posix.fd_t {
     const master_fd = posix.open("/dev/ptmx", .{ .ACCMODE = .RDWR, .NOCTTY = true }, 0) catch {
+        Logger.err("Failed to open /dev/ptmx", .{});
         return PTYError.OpenPTYFailed;
     };
 
-    // Grant access and unlock slave PTY (macOS/BSD specific calls)
-    // These are simplified - in a production system you'd use proper C bindings
+    // Grant access to slave PTY (macOS specific)
+    // In a production system, you'd call grantpt() and unlockpt()
+    // For now, we'll try to continue without these calls
+    Logger.debug("Opened PTY master: {d}", .{master_fd});
+
     return master_fd;
 }
 
 /// Open corresponding PTY slave device
 fn openPTYSlave(master_fd: posix.fd_t) PTYError!posix.fd_t {
-    // For now, use a simple approach - in a real implementation you'd get the slave name
-    // from the master using ptsname() or equivalent
-    var slave_path_buf: [64]u8 = undefined;
-    const slave_path = std.fmt.bufPrint(&slave_path_buf, "/dev/pts/{d}", .{master_fd}) catch {
+    Logger.debug("Opening PTY slave for master fd: {d}", .{master_fd});
+
+    // First, grant access to the slave PTY
+    if (grantpt(@intCast(master_fd)) != 0) {
+        Logger.err("grantpt() failed: {}", .{std.c._errno().*});
+        return PTYError.OpenPTYFailed;
+    }
+
+    // Unlock the slave PTY
+    if (unlockpt(@intCast(master_fd)) != 0) {
+        Logger.err("unlockpt() failed: {}", .{std.c._errno().*});
+        return PTYError.OpenPTYFailed;
+    }
+
+    // Get the slave device name
+    const slave_name_ptr = ptsname(@intCast(master_fd));
+    if (slave_name_ptr == null) {
+        Logger.err("ptsname() failed: {}", .{std.c._errno().*});
+        return PTYError.OpenPTYFailed;
+    }
+
+    // Convert C string to Zig string - handle the optional pointer properly
+    const slave_name = std.mem.span(slave_name_ptr.?);
+    Logger.debug("Slave PTY device name: {s}", .{slave_name});
+
+    // Open the slave device
+    const slave_fd = posix.open(slave_name, .{ .ACCMODE = .RDWR, .NOCTTY = true }, 0) catch |err| {
+        Logger.err("Failed to open slave PTY device {s}: {any}", .{ slave_name, err });
         return PTYError.OpenPTYFailed;
     };
 
-    const slave_fd = posix.open(slave_path, .{ .ACCMODE = .RDWR, .NOCTTY = true }, 0) catch {
-        // Fallback to a common pts device
-        return posix.open("/dev/tty", .{ .ACCMODE = .RDWR, .NOCTTY = true }, 0) catch {
-            return PTYError.OpenPTYFailed;
-        };
-    };
-
+    Logger.debug("Opened PTY slave: {s} -> {d}", .{ slave_name, slave_fd });
     return slave_fd;
 }
 
@@ -165,29 +208,65 @@ fn spawnShell(slave_fd: posix.fd_t) PTYError!posix.pid_t {
 
     if (pid == 0) {
         // Child process - set up new session
-        // Note: setsid() creates a new session and process group
-        // For now, we'll skip this for simplicity on macOS
-        // In a production system, you'd use proper platform-specific session management
+        // Use direct system call for setsid (simplified approach)
+        // For now, skip setsid to avoid compilation issues
+        Logger.debug("Child process started, setting up PTY redirection", .{});
+
+        // Make this PTY the controlling terminal
+        // On macOS, we need to do this properly (simplified for now)
+        // _ = posix.ioctl(slave_fd, std.os.linux.T.IOCSCTTY, @as(u32, 0)) catch {
+        //     Logger.warn("Failed to set controlling terminal, continuing...", .{});
+        // };
 
         // Redirect stdin/stdout/stderr to slave PTY
-        _ = posix.dup2(slave_fd, posix.STDIN_FILENO) catch {};
-        _ = posix.dup2(slave_fd, posix.STDOUT_FILENO) catch {};
-        _ = posix.dup2(slave_fd, posix.STDERR_FILENO) catch {};
+        _ = posix.dup2(slave_fd, posix.STDIN_FILENO) catch {
+            Logger.err("Failed to redirect stdin", .{});
+            posix.exit(1);
+        };
+        _ = posix.dup2(slave_fd, posix.STDOUT_FILENO) catch {
+            Logger.err("Failed to redirect stdout", .{});
+            posix.exit(1);
+        };
+        _ = posix.dup2(slave_fd, posix.STDERR_FILENO) catch {
+            Logger.err("Failed to redirect stderr", .{});
+            posix.exit(1);
+        };
 
         // Close original slave fd
         posix.close(slave_fd);
 
         // Get shell from environment or use default
-        const shell = posix.getenv("SHELL") orelse "/bin/sh";
-        const argv = [_:null]?[*:0]u8{ @constCast(shell.ptr), null };
-        const envp = [_:null]?[*:0]u8{null};
+        const shell = posix.getenv("SHELL") orelse "/bin/zsh";
 
-        _ = posix.execveZ(@constCast(shell.ptr), &argv, &envp) catch {};
-        
+        // Set up proper environment for shell
+        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer arena.deinit();
+
+        // Create argv with proper shell arguments
+        const argv = [_:null]?[*:0]u8{
+            @constCast(shell.ptr),
+            @constCast("-l"), // Login shell
+            null,
+        };
+
+        // Set up environment - use correct type for Zig 0.14
+        const envp: [*:null]const ?[*:0]const u8 = @ptrCast(&[_:null]?[*:0]const u8{null});
+
+        Logger.info("Executing shell: {s} with args: {s}", .{ shell, "-l" });
+        const exec_result = posix.execveZ(@constCast(shell.ptr), &argv, envp);
+
+        // If we reach here, exec failed
+        Logger.err("Failed to exec shell {s}: {}", .{ shell, exec_result });
+        posix.exit(1);
+
         // If exec fails, exit child process
         posix.exit(1);
     }
 
-    // Parent process - return child PID
+    // Parent process - close slave fd (child has its own copy)
+    posix.close(slave_fd);
+
+    // Return child PID
+    Logger.info("Shell process spawned with PID: {d}", .{pid});
     return pid;
 }

@@ -86,7 +86,7 @@ pub const Gui = struct {
     /// Handles events, rendering, and PTY communication
     pub fn run(self: *Self) !void {
         std.log.info("Starting main GUI render loop...", .{});
-        
+
         main_loop: while (true) {
             // Increment frame counter for debugging
             self.frame_count += 1;
@@ -109,7 +109,7 @@ pub const Gui = struct {
             if (!self.initial_test_sent) {
                 // First, let's add some content directly to the terminal buffer for immediate display
                 self.populateInitialBuffer();
-                
+
                 // Then try to send command to PTY
                 _ = self.pty.write("echo 'Hello from Zigline!' && ps1='$ '\n") catch |err| {
                     std.log.warn("Failed to send initial test command: {any}", .{err});
@@ -120,7 +120,35 @@ pub const Gui = struct {
 
             // Process SDL events and forward to DVUI
             const quit = try self.backend.addAllEvents(&self.window);
-            if (quit) break :main_loop;
+            if (quit) {
+                std.log.info("Quit event received, breaking main loop", .{});
+                break :main_loop;
+            }
+
+            // Check for DVUI close events and ESC key
+            if (self.window.wd.rect.w == 0 or self.window.wd.rect.h == 0) {
+                std.log.info("Window closed (zero dimensions), breaking main loop", .{});
+                break :main_loop;
+            }
+
+            // Check for ESC key as additional quit method
+            const events = dvui.events();
+            for (events) |event| {
+                switch (event.evt) {
+                    .key => |key_event| {
+                        if (key_event.action == .down and key_event.code == dvui.enums.Key.escape) {
+                            // Check if Cmd+ESC or Ctrl+ESC to quit (on macOS use Cmd, others use Ctrl)
+                            if (key_event.mod.has(.lcommand) or key_event.mod.has(.rcommand) or
+                                key_event.mod.has(.lcontrol) or key_event.mod.has(.rcontrol))
+                            {
+                                std.log.info("Cmd/Ctrl+ESC detected, quitting application", .{});
+                                break :main_loop;
+                            }
+                        }
+                    },
+                    else => {},
+                }
+            }
 
             // Handle DVUI input events and forward to terminal
             try self.handleInput();
@@ -129,8 +157,8 @@ pub const Gui = struct {
             _ = Backend.c.SDL_SetRenderDrawColor(self.backend.renderer, 0, 0, 0, 255);
             _ = Backend.c.SDL_RenderClear(self.backend.renderer);
 
-            // Render the terminal interface
-            try self.renderTerminal();
+            // Render the terminal interface (font-free version)
+            try self.renderTerminalNoText();
 
             // End DVUI frame
             const end_micros = try self.window.end(.{});
@@ -187,7 +215,7 @@ pub const Gui = struct {
                             std.log.debug("Mouse wheel X: {}", .{dx});
                         },
                         .wheel_y => |dy| {
-                            // Vertical wheel scrolling 
+                            // Vertical wheel scrolling
                             std.log.debug("Mouse wheel Y: {}", .{dy});
                         },
                         .position => {
@@ -251,7 +279,10 @@ pub const Gui = struct {
             dvui.enums.Key.enter => return "\r",
             dvui.enums.Key.backspace => return "\x7f",
             dvui.enums.Key.tab => return "\t",
-            dvui.enums.Key.escape => return "\x1b",
+            dvui.enums.Key.escape => {
+                std.log.info("ESC key detected - this could be used to exit the application", .{});
+                return "\x1b";
+            },
 
             // Arrow Keys
             dvui.enums.Key.up => return "\x1b[A",
@@ -340,9 +371,8 @@ pub const Gui = struct {
 
         // Terminal status - using debug output to avoid SDL texture crashes
         var status_buffer: [256]u8 = undefined;
-        const status_text = try std.fmt.bufPrint(&status_buffer, "Terminal: {} chars, Frame: {}, Cursor: {},{}",
-            .{ non_empty_count, self.frame_count, self.terminal.cursor_x, self.terminal.cursor_y });
-        
+        const status_text = try std.fmt.bufPrint(&status_buffer, "Terminal: {} chars, Frame: {}, Cursor: {},{}", .{ non_empty_count, self.frame_count, self.terminal.cursor_x, self.terminal.cursor_y });
+
         // Log status to console instead of rendering to avoid texture issues
         if (self.frame_count % 60 == 0) {
             std.log.debug("Status: {s}", .{status_text});
@@ -368,15 +398,15 @@ pub const Gui = struct {
         defer terminal_container.deinit();
 
         const buffer = &self.terminal.buffer;
-        
+
         // Always show a prompt line even if buffer is empty (for debugging)
         try self.renderPromptLine();
-        
+
         // Render the first few lines of terminal content
         for (0..@min(buffer.height, 10)) |row| {
             try self.renderTerminalLine(@intCast(row));
         }
-        
+
         // Show cursor position indicator
         try self.renderCursor();
 
@@ -389,12 +419,12 @@ pub const Gui = struct {
     /// Render a single terminal line with actual buffer content
     fn renderTerminalLine(self: *Self, row: u32) !void {
         const buffer = &self.terminal.buffer;
-        
+
         // Build the line content
         var line_buffer: [128]u8 = undefined;
         var line_pos: usize = 0;
         var has_content = false;
-        
+
         for (0..@min(buffer.width, 80)) |col| {
             if (buffer.getCell(@intCast(col), row)) |cell| {
                 const char = if (cell.char == 0) ' ' else @as(u8, @intCast(@min(cell.char, 255)));
@@ -407,27 +437,24 @@ pub const Gui = struct {
                 }
             }
         }
-        
+
         // Only render lines with content or the first line (for prompt)
         if (has_content or row == 0) {
             line_buffer[line_pos] = 0;
             const line_text = line_buffer[0..line_pos];
-            
+
             // Create a stable ID for this line
             var line_box = try dvui.box(@src(), .horizontal, .{
                 .expand = .horizontal,
                 .min_size_content = .{ .w = 0, .h = 16 },
             });
             defer line_box.deinit();
-            
-            // Use textEntry to show actual text content (it's more stable than label)
+
+            // Use a simple label instead of textEntry to avoid font texture issues
             if (line_text.len > 0) {
-                var text_display = try dvui.textEntry(@src(), .{
-                    .text = .{ .buffer = @constCast(line_text) },
-                }, .{
+                try dvui.labelNoFmt(@src(), line_text, .{
                     .expand = .horizontal,
                 });
-                defer text_display.deinit();
             }
         }
     }
@@ -435,7 +462,7 @@ pub const Gui = struct {
     /// Render a fallback prompt line when buffer is empty
     fn renderPromptLine(self: *Self) !void {
         const buffer = &self.terminal.buffer;
-        
+
         // Check if the first line is empty and show a default prompt
         var first_line_empty = true;
         for (0..@min(buffer.width, 10)) |col| {
@@ -446,7 +473,7 @@ pub const Gui = struct {
                 }
             }
         }
-        
+
         if (first_line_empty) {
             var prompt_box = try dvui.box(@src(), .horizontal, .{
                 .expand = .horizontal,
@@ -454,13 +481,9 @@ pub const Gui = struct {
                 .margin = .{ .x = 5, .y = 2, .w = 5, .h = 2 },
             });
             defer prompt_box.deinit();
-            
-            // Show a default shell prompt
-            var prompt_text = try dvui.textEntry(@src(), .{
-                .text = .{ .internal = .{ .limit = 10 } },
-                .placeholder = "$ ",
-            }, .{});
-            defer prompt_text.deinit();
+
+            // Show a default shell prompt with simple label
+            try dvui.labelNoFmt(@src(), "$ ", .{});
         }
     }
 
@@ -473,17 +496,13 @@ pub const Gui = struct {
             .margin = .{ .x = 5, .y = 5, .w = 5, .h = 5 },
         });
         defer cursor_box.deinit();
-        
+
         // Show cursor position and blinking state
         const cursor_visible = (self.frame_count / 30) % 2 == 0; // Blink every 30 frames
         var cursor_buffer: [64]u8 = undefined;
-        const cursor_text = try std.fmt.bufPrint(&cursor_buffer, "Cursor: ({},{}) {s}", 
-            .{ self.terminal.cursor_x, self.terminal.cursor_y, if (cursor_visible) "█" else "_" });
-        
-        var cursor_display = try dvui.textEntry(@src(), .{
-            .text = .{ .buffer = @constCast(cursor_text) },
-        }, .{});
-        defer cursor_display.deinit();
+        const cursor_text = try std.fmt.bufPrint(&cursor_buffer, "Cursor: ({},{}) {s}", .{ self.terminal.cursor_x, self.terminal.cursor_y, if (cursor_visible) "█" else "_" });
+
+        try dvui.labelNoFmt(@src(), cursor_text, .{});
     }
 
     /// Log terminal buffer content to console for debugging
@@ -491,13 +510,13 @@ pub const Gui = struct {
         const buffer = &self.terminal.buffer;
         var line_count: u32 = 0;
         var char_count: u32 = 0;
-        
+
         std.log.debug("=== Terminal Buffer Content ===", .{});
         for (0..@min(buffer.height, 10)) |row| { // Show first 10 lines
             var line_buffer: [128]u8 = undefined;
             var line_pos: usize = 0;
             var has_content = false;
-            
+
             for (0..@min(buffer.width, 80)) |col| { // Show first 80 chars
                 if (buffer.getCell(@intCast(col), @intCast(row))) |cell| {
                     const char = if (cell.char == 0) ' ' else @as(u8, @intCast(@min(cell.char, 255)));
@@ -511,23 +530,28 @@ pub const Gui = struct {
                     }
                 }
             }
-            
+
             if (has_content) {
                 line_buffer[line_pos] = 0;
                 std.log.debug("Line {d}: '{s}'", .{ row, line_buffer[0..line_pos] });
                 line_count += 1;
             }
         }
-        
-        std.log.debug("Terminal: {d} lines with content, {d} total chars, cursor at ({d},{d})", 
-            .{ line_count, char_count, self.terminal.cursor_x, self.terminal.cursor_y });
+
+        std.log.debug("Terminal: {d} lines with content, {d} total chars, cursor at ({d},{d})", .{ line_count, char_count, self.terminal.cursor_x, self.terminal.cursor_y });
     }
 
     /// Read output from PTY and process it through the terminal (Phase 6)
     fn readPtyOutput(self: *Self) !void {
         std.log.debug("readPtyOutput() called - checking for PTY data", .{});
 
-        // First check if data is available (non-blocking check)
+        // First check if the child process is still alive
+        if (!self.pty.isChildAlive()) {
+            std.log.err("Child shell process has died! Terminating GUI.", .{});
+            return; // This will eventually exit the main loop
+        }
+
+        // Then check if data is available (non-blocking check)
         if (!self.pty.hasData()) {
             // Don't log every time, just occasionally for debugging
             if (self.frame_count % 120 == 0) { // Log every 120 frames (about once every 2 seconds)
@@ -570,11 +594,11 @@ pub const Gui = struct {
     /// Populate terminal buffer with initial content for testing
     fn populateInitialBuffer(self: *Self) void {
         std.log.info("Populating initial buffer with test content", .{});
-        
+
         // Add a welcome message to the buffer
         const welcome_msg = "Zigline Terminal v0.3.0";
         const prompt = "$ ";
-        
+
         // Write welcome message to first line
         var col: u32 = 0;
         for (welcome_msg) |char| {
@@ -588,7 +612,7 @@ pub const Gui = struct {
                 col += 1;
             }
         }
-        
+
         // Write prompt to second line
         col = 0;
         for (prompt) |char| {
@@ -602,11 +626,153 @@ pub const Gui = struct {
                 col += 1;
             }
         }
-        
+
         // Set cursor position
         self.terminal.cursor_x = @intCast(col);
         self.terminal.cursor_y = 1;
-        
+
         std.log.info("Initial buffer populated with welcome message and prompt", .{});
+    }
+
+    /// Render terminal state using colored rectangles instead of text (font-free)
+    /// This avoids the font texture creation issues
+    fn renderTerminalNoText(self: *Self) !void {
+        // Create main terminal container with visible background
+        var terminal_container = try dvui.box(@src(), .vertical, .{
+            .id_extra = 100, // Unique ID for main container
+            .expand = .both,
+            .background = true,
+            .color_fill = .{ .color = dvui.Color{ .r = 40, .g = 40, .b = 40 } }, // Dark gray background
+            .margin = .{ .x = 10, .y = 10, .w = 10, .h = 10 },
+        });
+        defer terminal_container.deinit();
+
+        // Title bar with unique ID
+        var title_box = try dvui.box(@src(), .horizontal, .{
+            .id_extra = 101, // Unique ID for title
+            .expand = .horizontal,
+            .min_size_content = .{ .w = 0, .h = 30 },
+            .background = true,
+            .color_fill = .{ .color = dvui.Color{ .r = 60, .g = 120, .b = 200 } }, // Blue title bar
+            .margin = .{ .x = 2, .y = 2, .w = 2, .h = 2 },
+        });
+        defer title_box.deinit();
+
+        // Status indicator in title
+        var status_indicator = try dvui.box(@src(), .horizontal, .{
+            .id_extra = 102, // Unique ID for status
+            .min_size_content = .{ .w = 20, .h = 20 },
+            .background = true,
+            .color_fill = .{ .color = if (self.pty.isChildAlive()) dvui.Color{ .r = 0, .g = 255, .b = 0 } else dvui.Color{ .r = 255, .g = 0, .b = 0 } },
+            .margin = .{ .x = 5, .y = 5, .w = 5, .h = 5 },
+        });
+        defer status_indicator.deinit();
+
+        // Terminal content area with scrollable region
+        var content_box = try dvui.box(@src(), .vertical, .{
+            .id_extra = 103, // Unique ID for content
+            .expand = .both,
+            .background = true,
+            .color_fill = .{ .color = dvui.Color{ .r = 20, .g = 20, .b = 20 } }, // Dark terminal background
+            .margin = .{ .x = 5, .y = 5, .w = 5, .h = 5 },
+        });
+        defer content_box.deinit();
+
+        // Render character grid visualization
+        const buffer = &self.terminal.buffer;
+        var visible_chars: u32 = 0;
+
+        // Show first 8 lines of terminal content as colored boxes
+        for (0..@min(buffer.height, 8)) |row| {
+            var line_box = try dvui.box(@src(), .horizontal, .{
+                .id_extra = @as(u32, @intCast(200 + row)), // Unique ID for each line
+                .expand = .horizontal,
+                .min_size_content = .{ .w = 0, .h = 16 },
+                .margin = .{ .x = 1, .y = 1, .w = 1, .h = 1 },
+            });
+            defer line_box.deinit();
+
+            // Show first 20 characters of each line as small boxes
+            for (0..@min(buffer.width, 20)) |col| {
+                if (buffer.getCell(@intCast(col), @intCast(row))) |cell| {
+                    const has_char = cell.char != 0 and cell.char != ' ';
+                    if (has_char) visible_chars += 1;
+
+                    var char_box = try dvui.box(@src(), .horizontal, .{
+                        .id_extra = @as(u32, @intCast(1000 + row * 100 + col)), // Unique ID for each character position
+                        .min_size_content = .{ .w = 8, .h = 14 },
+                        .background = true,
+                        .color_fill = .{
+                            .color = if (has_char)
+                                dvui.Color{ .r = 200, .g = 200, .b = 200 } // Light gray for characters
+                            else
+                                dvui.Color{ .r = 60, .g = 60, .b = 60 },
+                        }, // Dark gray for empty spaces
+                        .margin = .{ .x = 1, .y = 0, .w = 0, .h = 0 },
+                    });
+                    defer char_box.deinit();
+                }
+            }
+        }
+
+        // Cursor indicator
+        const cursor_visible = (self.frame_count / 30) % 2 == 0; // Blink every 30 frames
+        if (cursor_visible and self.terminal.cursor_y < 8 and self.terminal.cursor_x < 20) {
+            var cursor_box = try dvui.box(@src(), .horizontal, .{
+                .id_extra = 9999, // Unique ID for cursor
+                .min_size_content = .{ .w = 8, .h = 14 },
+                .background = true,
+                .color_fill = .{ .color = dvui.Color{ .r = 255, .g = 255, .b = 0 } }, // Yellow cursor
+                .margin = .{ .x = 1, .y = 1, .w = 1, .h = 1 },
+            });
+            defer cursor_box.deinit();
+        }
+
+        // Bottom status bar
+        var bottom_status = try dvui.box(@src(), .horizontal, .{
+            .id_extra = 104, // Unique ID for bottom status
+            .expand = .horizontal,
+            .min_size_content = .{ .w = 0, .h = 25 },
+            .background = true,
+            .color_fill = .{ .color = dvui.Color{ .r = 80, .g = 80, .b = 80 } }, // Gray status bar
+            .margin = .{ .x = 2, .y = 2, .w = 2, .h = 2 },
+        });
+        defer bottom_status.deinit();
+
+        // Frame counter indicator (changes color every second)
+        const frame_color_cycle = (self.frame_count / 60) % 3; // Change every 60 frames (1 second)
+        var frame_indicator = try dvui.box(@src(), .horizontal, .{
+            .id_extra = 105, // Unique ID for frame indicator
+            .min_size_content = .{ .w = 30, .h = 15 },
+            .background = true,
+            .color_fill = .{
+                .color = switch (frame_color_cycle) {
+                    0 => dvui.Color{ .r = 255, .g = 100, .b = 100 }, // Red
+                    1 => dvui.Color{ .r = 100, .g = 255, .b = 100 }, // Green
+                    else => dvui.Color{ .r = 100, .g = 100, .b = 255 }, // Blue
+                },
+            },
+            .margin = .{ .x = 5, .y = 5, .w = 5, .h = 5 },
+        });
+        defer frame_indicator.deinit();
+
+        // Character count indicator (width based on number of characters)
+        const char_width = @min(200, visible_chars * 2); // Width proportional to character count
+        var char_counter = try dvui.box(@src(), .horizontal, .{
+            .id_extra = 106, // Unique ID for character counter
+            .min_size_content = .{ .w = @floatFromInt(char_width), .h = 15 },
+            .background = true,
+            .color_fill = .{ .color = dvui.Color{ .r = 150, .g = 255, .b = 150 } }, // Light green
+            .margin = .{ .x = 5, .y = 5, .w = 5, .h = 5 },
+        });
+        defer char_counter.deinit();
+
+        // Log status occasionally
+        if (self.frame_count % 60 == 0) {
+            std.log.info("Rendered terminal visualization: {} visible chars, cursor at ({},{}), frame {}", .{ visible_chars, self.terminal.cursor_x, self.terminal.cursor_y, self.frame_count });
+        }
+
+        // Read PTY data to keep it processing
+        try self.readPtyOutput();
     }
 };

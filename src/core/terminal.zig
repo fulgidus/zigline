@@ -71,7 +71,7 @@ pub const Terminal = struct {
     /// Process incoming data from PTY and update buffer
     pub fn processInput(self: *Terminal) TerminalError!bool {
         var read_buffer: [4096]u8 = undefined;
-        
+
         const bytes_read = self.pty.read(&read_buffer) catch |err| {
             Logger.err("Error reading from PTY: {}", .{err});
             return TerminalError.PTYError;

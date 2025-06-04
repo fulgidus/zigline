@@ -67,7 +67,7 @@ pub const TerminalRenderer = struct {
                 // Map terminal color to DVUI color
                 const fg = colorToDvui(cell.fg_color);
                 const bg = colorToDvui(cell.bg_color);
-                
+
                 // Render each character as a label with its style
                 const char_byte = @as(u8, @intCast(@min(cell.char, 255)));
                 const char_bytes = [_]u8{char_byte};
