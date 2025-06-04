@@ -39,15 +39,13 @@ pub const Gui = struct {
         input_processor: ?*InputProcessor,
         pty: *PTY,
     ) !Self {
-        // Note: SDL_VIDEODRIVER=x11 should be set via run_x11.sh script
-        
-        // Initialize SDL3 backend with window - try different settings
-        std.log.info("Initializing SDL3 backend...", .{});
+        // Initialize SDL3 backend with macOS-optimized settings
+        std.log.info("Initializing SDL3 backend for macOS...", .{});
         var backend = try Backend.initWindow(.{
             .allocator = allocator,
             .size = .{ .w = 1200.0, .h = 800.0 },
             .min_size = .{ .w = 400.0, .h = 300.0 },
-            .vsync = false, // Try without vsync
+            .vsync = true, // Enable vsync on macOS for better performance
             .title = "Zigline Terminal",
         });
         std.log.info("SDL3 backend initialized successfully", .{});
@@ -109,11 +107,15 @@ pub const Gui = struct {
 
             // Send initial test command on first frame (for debugging)
             if (!self.initial_test_sent) {
+                // First, let's add some content directly to the terminal buffer for immediate display
+                self.populateInitialBuffer();
+                
+                // Then try to send command to PTY
                 _ = self.pty.write("echo 'Hello from Zigline!' && ps1='$ '\n") catch |err| {
                     std.log.warn("Failed to send initial test command: {any}", .{err});
                 };
                 self.initial_test_sent = true;
-                std.log.info("Sent initial test command to shell", .{});
+                std.log.info("Sent initial test command to shell and populated buffer", .{});
             }
 
             // Process SDL events and forward to DVUI
@@ -314,13 +316,12 @@ pub const Gui = struct {
         }
 
         // Create main container for terminal with stable properties
-        _ = try dvui.box(@src(), .vertical, .{
-            .id_extra = 1, // Stable ID
+        var main_container = try dvui.box(@src(), .vertical, .{
             .expand = .both,
             .background = true,
             .color_fill = .{ .color = dvui.Color{ .r = 10, .g = 10, .b = 10 } }, // Dark terminal background
         });
-        // Note: No defer deinit() - DVUI manages widget lifecycle
+        defer main_container.deinit();
 
         // Get terminal buffer for rendering actual content
         const buffer = &self.terminal.buffer;
@@ -356,30 +357,133 @@ pub const Gui = struct {
         }
     }
 
-    /// Render the terminal buffer content safely without text labels
+    /// Render the terminal buffer content with actual text and cursor
     fn renderTerminalContentSafe(self: *Self) !void {
         // Create a visual container for the terminal area
         var terminal_container = try dvui.box(@src(), .vertical, .{
-            .id_extra = 10,
             .expand = .both,
             .color_fill = .{ .color = dvui.Color{ .r = 20, .g = 20, .b = 20 } }, // Dark terminal background
             .margin = .{ .x = 10, .y = 10, .w = 10, .h = 10 },
         });
         defer terminal_container.deinit();
 
-        // Add a simple rectangle to represent terminal content
-        _ = try dvui.box(@src(), .horizontal, .{
-            .id_extra = 11,
-            .expand = .both,
-            .color_fill = .{ .color = dvui.Color{ .r = 0, .g = 30, .b = 0 } }, // Very dark green
-            .margin = .{ .x = 5, .y = 5, .w = 5, .h = 5 },
-            .min_size_content = .{ .w = 400, .h = 300 },
-        });
+        const buffer = &self.terminal.buffer;
+        
+        // Always show a prompt line even if buffer is empty (for debugging)
+        try self.renderPromptLine();
+        
+        // Render the first few lines of terminal content
+        for (0..@min(buffer.height, 10)) |row| {
+            try self.renderTerminalLine(@intCast(row));
+        }
+        
+        // Show cursor position indicator
+        try self.renderCursor();
 
         // Log terminal content to console for debugging
         if (self.frame_count % 120 == 0) { // Every 2 seconds at 60fps
             self.logTerminalContent();
         }
+    }
+
+    /// Render a single terminal line with actual buffer content
+    fn renderTerminalLine(self: *Self, row: u32) !void {
+        const buffer = &self.terminal.buffer;
+        
+        // Build the line content
+        var line_buffer: [128]u8 = undefined;
+        var line_pos: usize = 0;
+        var has_content = false;
+        
+        for (0..@min(buffer.width, 80)) |col| {
+            if (buffer.getCell(@intCast(col), row)) |cell| {
+                const char = if (cell.char == 0) ' ' else @as(u8, @intCast(@min(cell.char, 255)));
+                if (line_pos < line_buffer.len - 1) {
+                    line_buffer[line_pos] = if (char < 32 and char != 0) '?' else char;
+                    line_pos += 1;
+                    if (char != ' ' and char != 0) {
+                        has_content = true;
+                    }
+                }
+            }
+        }
+        
+        // Only render lines with content or the first line (for prompt)
+        if (has_content or row == 0) {
+            line_buffer[line_pos] = 0;
+            const line_text = line_buffer[0..line_pos];
+            
+            // Create a stable ID for this line
+            var line_box = try dvui.box(@src(), .horizontal, .{
+                .expand = .horizontal,
+                .min_size_content = .{ .w = 0, .h = 16 },
+            });
+            defer line_box.deinit();
+            
+            // Use textEntry to show actual text content (it's more stable than label)
+            if (line_text.len > 0) {
+                var text_display = try dvui.textEntry(@src(), .{
+                    .text = .{ .buffer = @constCast(line_text) },
+                }, .{
+                    .expand = .horizontal,
+                });
+                defer text_display.deinit();
+            }
+        }
+    }
+
+    /// Render a fallback prompt line when buffer is empty
+    fn renderPromptLine(self: *Self) !void {
+        const buffer = &self.terminal.buffer;
+        
+        // Check if the first line is empty and show a default prompt
+        var first_line_empty = true;
+        for (0..@min(buffer.width, 10)) |col| {
+            if (buffer.getCell(@intCast(col), 0)) |cell| {
+                if (cell.char != 0 and cell.char != ' ') {
+                    first_line_empty = false;
+                    break;
+                }
+            }
+        }
+        
+        if (first_line_empty) {
+            var prompt_box = try dvui.box(@src(), .horizontal, .{
+                .expand = .horizontal,
+                .min_size_content = .{ .w = 0, .h = 16 },
+                .margin = .{ .x = 5, .y = 2, .w = 5, .h = 2 },
+            });
+            defer prompt_box.deinit();
+            
+            // Show a default shell prompt
+            var prompt_text = try dvui.textEntry(@src(), .{
+                .text = .{ .internal = .{ .limit = 10 } },
+                .placeholder = "$ ",
+            }, .{});
+            defer prompt_text.deinit();
+        }
+    }
+
+    /// Render cursor indicator
+    fn renderCursor(self: *Self) !void {
+        // Create a cursor indicator box
+        var cursor_box = try dvui.box(@src(), .horizontal, .{
+            .expand = .horizontal,
+            .min_size_content = .{ .w = 0, .h = 20 },
+            .margin = .{ .x = 5, .y = 5, .w = 5, .h = 5 },
+        });
+        defer cursor_box.deinit();
+        
+        // Show cursor position and blinking state
+        const cursor_visible = (self.frame_count / 30) % 2 == 0; // Blink every 30 frames
+        var cursor_buffer: [64]u8 = undefined;
+        const cursor_text = try std.fmt.bufPrint(&cursor_buffer, "Cursor: ({},{}) {s}", 
+            .{ self.terminal.cursor_x, self.terminal.cursor_y, if (cursor_visible) "█" else "_" });
+        
+        var cursor_display = try dvui.textEntry(@src(), .{
+            .text = .{ .buffer = @constCast(cursor_text) },
+        }, .{});
+        defer cursor_display.deinit();
     }
 
     /// Log terminal buffer content to console for debugging
@@ -461,5 +565,48 @@ pub const Gui = struct {
         } else {
             std.log.debug("PTY read returned 0 bytes", .{});
         }
+    }
+
+    /// Populate terminal buffer with initial content for testing
+    fn populateInitialBuffer(self: *Self) void {
+        std.log.info("Populating initial buffer with test content", .{});
+        
+        // Add a welcome message to the buffer
+        const welcome_msg = "Zigline Terminal v0.3.0";
+        const prompt = "$ ";
+        
+        // Write welcome message to first line
+        var col: u32 = 0;
+        for (welcome_msg) |char| {
+            if (col < self.terminal.buffer.width) {
+                self.terminal.buffer.setCell(col, 0, .{
+                    .char = char,
+                    .fg_color = .green,
+                    .bg_color = .black,
+                    .attributes = .{},
+                });
+                col += 1;
+            }
+        }
+        
+        // Write prompt to second line
+        col = 0;
+        for (prompt) |char| {
+            if (col < self.terminal.buffer.width) {
+                self.terminal.buffer.setCell(col, 1, .{
+                    .char = char,
+                    .fg_color = .white,
+                    .bg_color = .black,
+                    .attributes = .{},
+                });
+                col += 1;
+            }
+        }
+        
+        // Set cursor position
+        self.terminal.cursor_x = @intCast(col);
+        self.terminal.cursor_y = 1;
+        
+        std.log.info("Initial buffer populated with welcome message and prompt", .{});
     }
 };
