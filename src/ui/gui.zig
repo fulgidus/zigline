@@ -78,8 +78,19 @@ pub const Gui = struct {
     /// Clean up GUI resources
     /// Deinitializes DVUI window and SDL backend
     pub fn deinit(self: *Self) void {
+        std.log.info("Starting GUI cleanup...", .{});
+        
+        // Ensure window is properly closed
         self.window.deinit();
+        std.log.debug("DVUI window deinitialized", .{});
+        
+        // Force SDL cleanup if not already done
+        _ = Backend.c.SDL_DestroyWindow(self.backend.window);
         self.backend.deinit();
+        _ = Backend.c.SDL_QuitSubSystem(Backend.c.SDL_INIT_VIDEO);
+        Backend.c.SDL_Quit();
+        
+        std.log.info("GUI cleanup complete", .{});
     }
 
     /// Main GUI render loop
@@ -87,7 +98,8 @@ pub const Gui = struct {
     pub fn run(self: *Self) !void {
         std.log.info("Starting main GUI render loop...", .{});
 
-        main_loop: while (true) {
+        var should_exit = false;
+        main_loop: while (!should_exit) {
             // Increment frame counter for debugging
             self.frame_count += 1;
 
@@ -96,14 +108,23 @@ pub const Gui = struct {
                 std.log.debug("GUI render loop active - frame {}", .{self.frame_count});
             }
 
+            // Check if child process is still alive - exit if dead
+            if (!self.pty.isChildAlive()) {
+                std.log.warn("Child shell process has died - initiating shutdown", .{});
+                should_exit = true;
+                break :main_loop;
+            }
+
             // Begin frame timing for variable framerate
             const nstime = self.window.beginWait(self.backend.hasEvent());
 
             // Mark beginning of DVUI frame
             try self.window.begin(nstime);
 
-            // Read PTY output and process it (Phase 6)
-            try self.readPtyOutput();
+            // Read PTY output and process it (Phase 6) - catch errors to prevent hanging
+            self.readPtyOutput() catch |err| {
+                std.log.warn("PTY output read error: {any} - continuing", .{err});
+            };
 
             // Send initial test command on first frame (for debugging)
             if (!self.initial_test_sent) {
@@ -121,14 +142,16 @@ pub const Gui = struct {
             // Process SDL events and forward to DVUI
             const quit = try self.backend.addAllEvents(&self.window);
             if (quit) {
-                std.log.info("Quit event received, breaking main loop", .{});
-                break :main_loop;
+                std.log.info("Quit event received, setting exit flag", .{});
+                should_exit = true;
+                continue; // Continue to properly end the frame
             }
 
-            // Check for DVUI close events and ESC key
+            // Check for DVUI close events and window size
             if (self.window.wd.rect.w == 0 or self.window.wd.rect.h == 0) {
-                std.log.info("Window closed (zero dimensions), breaking main loop", .{});
-                break :main_loop;
+                std.log.info("Window closed (zero dimensions), setting exit flag", .{});
+                should_exit = true;
+                continue; // Continue to properly end the frame
             }
 
             // Check for ESC key as additional quit method
@@ -141,8 +164,9 @@ pub const Gui = struct {
                             if (key_event.mod.has(.lcommand) or key_event.mod.has(.rcommand) or
                                 key_event.mod.has(.lcontrol) or key_event.mod.has(.rcontrol))
                             {
-                                std.log.info("Cmd/Ctrl+ESC detected, quitting application", .{});
-                                break :main_loop;
+                                std.log.info("Cmd/Ctrl+ESC detected, setting exit flag", .{});
+                                should_exit = true;
+                                continue; // Continue to properly end the frame
                             }
                         }
                     },
@@ -150,18 +174,37 @@ pub const Gui = struct {
                 }
             }
 
+            // If exit was requested, break after properly ending the frame
+            if (should_exit) {
+                std.log.info("Exit requested, ending frame and breaking loop", .{});
+                
+                // Properly end the DVUI frame before exiting
+                _ = self.window.end(.{}) catch |err| {
+                    std.log.warn("Error ending DVUI frame during shutdown: {any}", .{err});
+                };
+                
+                break :main_loop;
+            }
+
             // Handle DVUI input events and forward to terminal
-            try self.handleInput();
+            self.handleInput() catch |err| {
+                std.log.warn("Input handling error: {any} - continuing", .{err});
+            };
 
             // Clear the frame
             _ = Backend.c.SDL_SetRenderDrawColor(self.backend.renderer, 0, 0, 0, 255);
             _ = Backend.c.SDL_RenderClear(self.backend.renderer);
 
             // Render the terminal interface (font-free version)
-            try self.renderTerminalNoText();
+            self.renderTerminalNoText() catch |err| {
+                std.log.warn("Terminal rendering error: {any} - continuing", .{err});
+            };
 
             // End DVUI frame
-            const end_micros = try self.window.end(.{});
+            const end_micros = self.window.end(.{}) catch |err| blk: {
+                std.log.warn("Error ending DVUI frame: {any} - continuing", .{err});
+                break :blk 0; // Default to 0 if end() fails
+            };
 
             // Handle cursor and text input
             self.backend.setCursor(self.window.cursorRequested());
@@ -174,6 +217,15 @@ pub const Gui = struct {
             const wait_event_micros = self.window.waitTime(end_micros, null);
             self.backend.waitEventTimeout(wait_event_micros);
         }
+
+        std.log.info("Main loop exited, performing cleanup...", .{});
+        
+        // Perform final cleanup
+        _ = Backend.c.SDL_DestroyWindow(self.backend.window);
+        _ = Backend.c.SDL_QuitSubSystem(Backend.c.SDL_INIT_VIDEO);
+        Backend.c.SDL_Quit();
+        
+        std.log.info("Final cleanup complete", .{});
     }
 
     /// Handle input from DVUI and forward to terminal
