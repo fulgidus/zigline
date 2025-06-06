@@ -214,7 +214,11 @@ pub const Gui = struct {
             self.backend.waitEventTimeout(wait_event_micros);
         }
 
-        std.log.info("Main loop exited, performing cleanup...", .{});
+        std.log.info("Main loop exited, performing final cleanup...", .{});
+
+        // Terminate PTY child process before GUI cleanup
+        std.log.info("Terminating PTY child process...", .{});
+        self.pty.terminateChild();
 
         // Perform final cleanup
         _ = Backend.c.SDL_DestroyWindow(self.backend.window);

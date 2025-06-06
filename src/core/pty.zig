@@ -29,6 +29,7 @@ pub const PTY = struct {
     child_pid: posix.pid_t,
     allocator: std.mem.Allocator,
     logger: *Logger.Logger,
+    child_terminated: bool, // Track if child has already been terminated
 
     /// Initialize a new PTY and spawn a shell process
     pub fn init(allocator: std.mem.Allocator) PTYError!PTY {
@@ -59,14 +60,48 @@ pub const PTY = struct {
     pub fn deinit(self: *PTY) void {
         Logger.info("Cleaning up PTY resources", .{});
 
+        // First terminate the child process gracefully
+        self.terminateChild();
+
         // Close file descriptors
         posix.close(self.master_fd);
         posix.close(self.slave_fd);
 
-        // Terminate child process if still running
-        _ = posix.waitpid(self.child_pid, 0);
-
         Logger.info("PTY cleanup complete", .{});
+    }
+
+    /// Terminate child process gracefully
+    pub fn terminateChild(self: *PTY) void {
+        Logger.info("Terminating child process {d}", .{self.child_pid});
+
+        // Check if child is still alive
+        const wait_result = posix.waitpid(self.child_pid, 1); // WNOHANG = 1
+        if (wait_result.pid == 0) {
+            // Child is still running, send SIGTERM
+            Logger.info("Child process still running, sending SIGTERM", .{});
+            _ = posix.kill(self.child_pid, posix.SIG.TERM) catch |err| {
+                Logger.warn("Failed to send SIGTERM to child process: {}", .{err});
+            };
+
+            // Wait briefly for graceful shutdown
+            std.time.sleep(100_000_000); // 100ms
+
+            // Check again
+            const wait_result2 = posix.waitpid(self.child_pid, 1); // WNOHANG = 1
+            if (wait_result2.pid == 0) {
+                // Still running, force kill
+                Logger.warn("Child process did not respond to SIGTERM, sending SIGKILL", .{});
+                _ = posix.kill(self.child_pid, posix.SIG.KILL) catch |err| {
+                    Logger.err("Failed to send SIGKILL to child process: {}", .{err});
+                };
+
+                // Final wait without WNOHANG (but should be quick now)
+                const final_result = posix.waitpid(self.child_pid, 0);
+                Logger.debug("Final waitpid result: pid={}, status={}", .{ final_result.pid, final_result.status });
+            }
+        }
+
+        Logger.info("Child process termination complete", .{});
     }
 
     /// Read data from PTY master (shell output)

@@ -116,19 +116,24 @@ fn initializeTerminalWithGui(allocator: std.mem.Allocator) !void {
     }
     defer if (input_processor_opt) |*input_proc| input_proc.deinit();
 
-    // Initialize GUI
+    // Initialize GUI - pass PTY ownership to GUI
     var gui = Gui.init(allocator, &terminal, if (input_processor_opt) |*ip| ip else null, &pty) catch |err| {
         Logger.err("Failed to initialize GUI: {}", .{err});
-        pty.deinit(); // Clean up PTY
+        pty.deinit(); // Clean up PTY if GUI init fails
         return err;
     };
     defer gui.deinit();
-    defer pty.deinit(); // Defer PTY deinit after GUI deinit
+    // Note: PTY will be cleaned up by GUI deinit, no need for separate defer
 
     Logger.info("GUI initialized successfully with DVUI", .{});
 
     // Run the GUI main loop
     try gui.run();
+
+    Logger.info("GUI main loop completed, performing cleanup", .{});
+    
+    // Explicitly clean up PTY after GUI loop ends
+    pty.deinit();
 }
 
 // Enhanced interactive event loop with keyboard input support (Fase 4)
