@@ -21,7 +21,6 @@ pub const PTYError = error{
     ReadFailed,
     WriteFailed,
     WouldBlock,
-    OutOfMemory,
 };
 
 /// PTY management structure
@@ -59,6 +58,16 @@ pub const PTY = struct {
         };
     }
 
+    /// Safe close that handles BADF errors (already closed descriptors)
+    fn safeClose(fd: posix.fd_t) void {
+        // Use direct syscall to avoid Zig's unreachable for BADF
+        const result = std.os.linux.close(fd);
+        if (result != 0) {
+            // Log the error but don't panic - file might already be closed
+            Logger.debug("Close syscall returned error code: {d} for fd: {d}", .{ result, fd });
+        }
+    }
+
     /// Clean up PTY resources
     pub fn deinit(self: *PTY) void {
         Logger.info("Cleaning up PTY resources", .{});
@@ -66,9 +75,12 @@ pub const PTY = struct {
         // First terminate the child process gracefully
         self.terminateChild();
 
-        // Close file descriptors
-        posix.close(self.master_fd);
-        posix.close(self.slave_fd);
+        // Close file descriptors safely using direct syscall
+        Logger.debug("Closing master_fd: {d}", .{self.master_fd});
+        safeClose(self.master_fd);
+
+        Logger.debug("Closing slave_fd: {d}", .{self.slave_fd});
+        safeClose(self.slave_fd);
 
         Logger.info("PTY cleanup complete", .{});
     }
@@ -79,7 +91,7 @@ pub const PTY = struct {
             Logger.info("Child process {d} already terminated", .{self.child_pid});
             return;
         }
-        
+
         Logger.info("Terminating child process {d}", .{self.child_pid});
 
         // Check if child is still alive - handle race conditions properly
@@ -107,7 +119,7 @@ pub const PTY = struct {
 
                 // Final wait without WNOHANG (but should be quick now)
                 const final_result = posix.waitpid(self.child_pid, 0);
-                Logger.debug("Final waitpid result: pid={}, status={}", .{ final_result.pid, final_result.status });
+                Logger.debug("Final waitpid result: pid={d}, status={d}", .{ final_result.pid, final_result.status });
             } else {
                 Logger.info("Child process terminated after SIGTERM", .{});
             }
@@ -115,10 +127,8 @@ pub const PTY = struct {
             // Child has already exited
             Logger.info("Child process {d} has already exited with status: {d}", .{ wait_result.pid, wait_result.status });
         }
-        
-        self.child_terminated = true;
-        }
 
+        self.child_terminated = true;
         Logger.info("Child process termination complete", .{});
     }
 
@@ -209,14 +219,28 @@ pub const PTY = struct {
 
     /// Check if the child shell process is still alive
     pub fn isChildAlive(self: *PTY) bool {
-        const result = posix.waitpid(self.child_pid, 1); // 1 = WNOHANG on most systems
+        // If we already know the child has terminated, return false immediately
+        if (self.child_terminated) {
+            return false;
+        }
 
-        if (result.pid == 0) {
+        // Use direct syscall to avoid Zig's unreachable for ECHILD
+        var status: u32 = 0;
+        const syscall_result = std.os.linux.wait4(self.child_pid, &status, 1, null); // 1 = WNOHANG
+
+        if (syscall_result < 0) {
+            // waitpid failed - likely ECHILD (no such child)
+            Logger.debug("waitpid syscall failed with error: {d} for child {d}", .{ syscall_result, self.child_pid });
+            self.child_terminated = true;
+            return false;
+        }
+
+        if (syscall_result == 0) {
             // Child is still running
             return true;
-        } else if (result.pid == self.child_pid) {
+        } else if (syscall_result == self.child_pid) {
             // Child has exited
-            Logger.warn("Child process {d} has exited with status: {d}", .{ self.child_pid, result.status });
+            Logger.warn("Child process {d} has exited with status: {d}", .{ self.child_pid, status });
             self.child_terminated = true;
             return false;
         }
@@ -324,49 +348,22 @@ fn spawnShell(slave_fd: posix.fd_t) PTYError!posix.pid_t {
         posix.close(slave_fd);
 
         // Get shell from environment or use default
-        const shell = posix.getenv("SHELL") orelse "/bin/zsh";
-
-        // Set up proper environment for shell
-        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-        defer arena.deinit();
+        const shell = posix.getenv("SHELL") orelse "/bin/bash";
 
         // Create argv with proper shell arguments
-        const argv = [_:null]?[*:0]u8{
+        const argv = [_:null]?[*:0]const u8{
             @constCast(shell.ptr),
             @constCast("-l"), // Login shell
             null,
         };
 
-        // Set up environment with TERM variable and other essential variables
-        const allocator = arena.allocator();
-        var env_list = std.ArrayList([*:0]const u8).init(allocator);
-
-        // Essential environment variables for terminal operation
-        try env_list.append(try allocator.dupeZ(u8, "TERM=xterm-256color"));
-        try env_list.append(try allocator.dupeZ(u8, "COLORTERM=truecolor"));
-
-        // Copy some existing environment variables if they exist
-        const important_vars = [_][]const u8{ "PATH", "HOME", "USER", "SHELL", "LANG", "LC_ALL" };
-        for (important_vars) |var_name| {
-            if (posix.getenv(var_name)) |value| {
-                const env_string = try std.fmt.allocPrintZ(allocator, "{s}={s}", .{ var_name, value });
-                try env_list.append(env_string);
-            }
-        }
-
-        // Add null terminator
-        try env_list.append(@as([*:0]const u8, @ptrCast(@as([*:0]const u8, ""))));
-
-        const envp: [*:null]const ?[*:0]const u8 = @ptrCast(env_list.items.ptr);
-
         Logger.info("Executing shell: {s} with args: {s}", .{ shell, "-l" });
-        const exec_result = posix.execveZ(@constCast(shell.ptr), &argv, envp);
+
+        // Use execveZ which exists in Zig 0.14.0
+        const result = posix.execveZ(@constCast(shell.ptr), &argv, std.c.environ);
 
         // If we reach here, exec failed
-        Logger.err("Failed to exec shell {s}: {}", .{ shell, exec_result });
-        posix.exit(1);
-
-        // If exec fails, exit child process
+        Logger.err("Failed to exec shell {s}: {}", .{ shell, result });
         posix.exit(1);
     }
 
