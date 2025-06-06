@@ -241,9 +241,9 @@ pub const TabManager = struct {
 
         // Render individual tab buttons
         for (&self.tabs, 0..) |*maybe_tab, index| {
-            if (maybe_tab.*) |*tab| {
+            if (maybe_tab.*) |_| {
                 const is_active = self.active_tab_index == index;
-                const tab_name = tab.getName();
+                // const tab_name = tab.getName();
 
                 // Tab button with different colors for active/inactive
                 var tab_button = try dvui.box(@src(), .horizontal, .{

@@ -132,8 +132,7 @@ fn initializeTerminalWithGui(allocator: std.mem.Allocator) !void {
 
     Logger.info("GUI main loop completed, performing cleanup", .{});
     
-    // Explicitly clean up PTY after GUI loop ends
-    pty.deinit();
+    // PTY cleanup is handled by GUI deinit, no need for explicit cleanup here
 }
 
 // Enhanced interactive event loop with keyboard input support (Fase 4)

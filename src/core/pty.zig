@@ -53,6 +53,7 @@ pub const PTY = struct {
             .child_pid = child_pid,
             .allocator = allocator,
             .logger = Logger.getGlobal(),
+            .child_terminated = false, // Initialize child as not terminated
         };
     }
 
@@ -74,8 +75,9 @@ pub const PTY = struct {
     pub fn terminateChild(self: *PTY) void {
         Logger.info("Terminating child process {d}", .{self.child_pid});
 
-        // Check if child is still alive
-        const wait_result = posix.waitpid(self.child_pid, 1); // WNOHANG = 1
+        // Check if child is still alive - handle race conditions properly
+        const wait_result = posix.waitpid(self.child_pid, 1); // WNOHANG
+        
         if (wait_result.pid == 0) {
             // Child is still running, send SIGTERM
             Logger.info("Child process still running, sending SIGTERM", .{});
@@ -87,7 +89,8 @@ pub const PTY = struct {
             std.time.sleep(100_000_000); // 100ms
 
             // Check again
-            const wait_result2 = posix.waitpid(self.child_pid, 1); // WNOHANG = 1
+            const wait_result2 = posix.waitpid(self.child_pid, 1); // WNOHANG
+            
             if (wait_result2.pid == 0) {
                 // Still running, force kill
                 Logger.warn("Child process did not respond to SIGTERM, sending SIGKILL", .{});
