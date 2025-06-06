@@ -68,15 +68,24 @@ pub const TerminalRenderer = struct {
                 const fg = colorToDvui(cell.fg_color);
                 const bg = colorToDvui(cell.bg_color);
 
+                // TEMPORARILY DISABLED: Text rendering causes SDL texture crash
                 // Render each character as a label with its style
-                const char_byte = @as(u8, @intCast(@min(cell.char, 255)));
-                const char_bytes = [_]u8{char_byte};
-                try dvui.labelNoFmt(src, &char_bytes, .{
-                    .font_style = .{ .size = self.font_size },
-                    .color_text = .{ .color = fg },
-                    .color_fill = .{ .color = bg },
-                    .expand = .none,
+                // const char_byte = @as(u8, @intCast(@min(cell.char, 255)));
+                // const char_bytes = [_]u8{char_byte};
+                // try dvui.labelNoFmt(src, &char_bytes, .{
+                //     .font_style = .body,
+                //     .color_text = .{ .color = fg },
+                //     .color_fill = .{ .color = bg },
+                //     .expand = .none,
+                // });
+                
+                // Instead, render as a colored box
+                var char_box = try dvui.box(src, .horizontal, .{
+                    .min_size_content = .{ .w = self.font_size * 0.6, .h = self.font_size },
+                    .background = true,
+                    .color_fill = .{ .color = if (cell.char > 32) fg else bg }, // Use fg color if printable char
                 });
+                defer char_box.deinit();
             }
             col += 1;
         }

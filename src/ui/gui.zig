@@ -191,8 +191,8 @@ pub const Gui = struct {
             _ = Backend.c.SDL_SetRenderDrawColor(self.backend.renderer, 50, 50, 50, 255);
             _ = Backend.c.SDL_RenderClear(self.backend.renderer);
 
-            // Render the terminal interface (improved visual version)
-            self.renderTerminalVisual() catch |err| {
+            // Render the terminal interface using only colored boxes (no text to avoid SDL crashes)
+            self.renderTerminalBoxes() catch |err| {
                 std.log.warn("Terminal rendering error: {any} - continuing", .{err});
             };
 
@@ -1003,4 +1003,137 @@ pub const Gui = struct {
             }
         }
     }
+
+    /// Simple terminal rendering WITHOUT text display (avoids SDL texture crash)
+    fn renderTerminalText(self: *Self) !void {
+        // Create main terminal container
+        var terminal_container = try dvui.box(@src(), .vertical, .{
+            .expand = .both,
+            .background = true,
+            .color_fill = .{ .color = dvui.Color{ .r = 0, .g = 0, .b = 0 } },
+            .padding = .{ .x = 10, .y = 10, .w = 10, .h = 10 },
+        });
+        defer terminal_container.deinit();
+
+        const buffer = &self.terminal.buffer;
+
+        // TEMPORARILY DISABLED: Show terminal title - causes SDL texture crash
+        // try dvui.labelNoFmt(@src(), "Zigline Terminal v0.3.0", .{
+        //     .color_text = .{ .color = dvui.Color{ .r = 0, .g = 255, .b = 0 } }, // Green text
+        //     .font_style = .title,
+        // });
+        
+        // Show terminal title as a colored box instead
+        var title_box = try dvui.box(@src(), .horizontal, .{
+            .expand = .horizontal,
+            .min_size_content = .{ .h = 30 },
+            .background = true,
+            .color_fill = .{ .color = dvui.Color{ .r = 0, .g = 100, .b = 0 } }, // Green title bar
+            .margin = .{ .x = 0, .y = 0, .w = 0, .h = 10 },
+        });
+        defer title_box.deinit();
+
+        // Render first 15 lines of terminal buffer
+        for (0..@min(buffer.height, 15)) |row| {
+            // Build line content
+            var line_text: [128]u8 = undefined;
+            var pos: usize = 0;
+            var has_content = false;
+
+            for (0..@min(buffer.width, 100)) |col| {
+                if (buffer.getCell(@intCast(col), @intCast(row))) |cell| {
+                    const char = if (cell.char == 0) ' ' else @as(u8, @intCast(@min(cell.char, 255)));
+                    if (pos < line_text.len - 1) {
+                        // Convert control characters to printable
+                        line_text[pos] = if (char < 32 and char != 0) '?' else char;
+                        pos += 1;
+                        if (char != ' ' and char != 0) has_content = true;
+                    }
+                }
+            }
+
+            // Show line if it has content or is first few lines
+            if (has_content or row < 3) {
+                line_text[pos] = 0;
+                // const line_str = line_text[0..pos]; // Unused since we're avoiding text rendering
+                
+                // Show line with cursor indicator if needed
+                if (row == self.terminal.cursor_y) {
+                    // Cursor line - show with green background
+                    var cursor_line = try dvui.box(@src(), .horizontal, .{
+                        .expand = .horizontal,
+                        .background = true,
+                        .color_fill = .{ .color = dvui.Color{ .r = 0, .g = 50, .b = 0 } },
+                        .margin = .{ .x = 0, .y = 1, .w = 0, .h = 1 },
+                    });
+                    defer cursor_line.deinit();
+                    
+                    // TEMPORARILY DISABLED: Text rendering causes SDL crash
+                    // try dvui.labelNoFmt(@src(), line_str, .{
+                    //     .color_text = .{ .color = dvui.Color{ .r = 255, .g = 255, .b = 255 } },
+                    //     .font_style = .heading,
+                    // });
+                    
+                    // Show cursor position as colored box instead
+                    var cursor_indicator = try dvui.box(@src(), .horizontal, .{
+                        .min_size_content = .{ .w = 200, .h = 20 },
+                        .background = true,
+                        .color_fill = .{ .color = dvui.Color{ .r = 255, .g = 255, .b = 0 } }, // Yellow for cursor
+                    });
+                    defer cursor_indicator.deinit();
+                } else {
+                    // Normal line - show as colored box representing content
+                    var line_indicator = try dvui.box(@src(), .horizontal, .{
+                        .expand = .horizontal,
+                        .min_size_content = .{ .h = 18 },
+                        .background = true,
+                        .color_fill = .{ .color = if (has_content) 
+                            dvui.Color{ .r = 50, .g = 50, .b = 50 } // Gray for content
+                        else 
+                            dvui.Color{ .r = 20, .g = 20, .b = 20 } }, // Dark gray for empty
+                    });
+                    defer line_indicator.deinit();
+                }
+            } else if (row == 0) {
+                // Always show first line even if empty - with a colored prompt indicator
+                var prompt_box = try dvui.box(@src(), .horizontal, .{
+                    .min_size_content = .{ .w = 50, .h = 18 },
+                    .background = true,
+                    .color_fill = .{ .color = dvui.Color{ .r = 0, .g = 255, .b = 0 } }, // Green prompt
+                });
+                defer prompt_box.deinit();
+            }
+        }        // Terminal status info - using colored boxes instead of text
+        var status_box = try dvui.box(@src(), .horizontal, .{
+            .expand = .horizontal,
+            .min_size_content = .{ .h = 25 },
+            .background = true,
+            .color_fill = .{ .color = dvui.Color{ .r = 40, .g = 40, .b = 40 } }, // Gray status bar
+        });
+        defer status_box.deinit();
+        
+        // Status indicators using colored boxes
+        const pty_alive = self.pty.isChildAlive();
+        var pty_indicator = try dvui.box(@src(), .horizontal, .{
+            .min_size_content = .{ .w = 30, .h = 20 },
+            .background = true,
+            .color_fill = .{ .color = if (pty_alive) 
+                dvui.Color{ .r = 0, .g = 255, .b = 0 } // Green if PTY alive
+            else 
+                dvui.Color{ .r = 255, .g = 0, .b = 0 } }, // Red if dead
+            .margin = .{ .x = 5, .y = 2, .w = 5, .h = 2 },
+        });
+        defer pty_indicator.deinit();
+
+        // Frame counter indicator  
+        var frame_indicator = try dvui.box(@src(), .horizontal, .{
+            .min_size_content = .{ .w = 40, .h = 20 },
+            .background = true,
+            .color_fill = .{ .color = dvui.Color{ .r = 100, .g = 100, .b = 255 } }, // Blue
+            .margin = .{ .x = 5, .y = 2, .w = 5, .h = 2 },
+        });
+        defer frame_indicator.deinit();
+    }
+
+    // ...existing code...
 };
