@@ -1,5 +1,5 @@
 //! Tab Management System for Zigline Terminal Emulator
-//! 
+//!
 //! This module handles multiple terminal sessions, allowing users to:
 //! - Create new tabs with individual PTYs and buffers
 //! - Switch between tabs using hotkeys (Ctrl+1, Ctrl+2, etc.)
@@ -20,25 +20,25 @@ pub const MAX_TABS = 10;
 pub const Tab = struct {
     /// Unique tab identifier
     id: u32,
-    
+
     /// Tab display name
     name: [64]u8,
-    
+
     /// Terminal instance for this tab
     terminal: Terminal,
-    
+
     /// PTY instance for this tab
     pty: PTY,
-    
+
     /// Whether this tab is currently active
     is_active: bool,
-    
+
     /// Last activity timestamp for sorting
     last_activity: i64,
-    
+
     /// Tab creation timestamp
     created_at: i64,
-    
+
     /// Initialize a new tab
     pub fn init(allocator: std.mem.Allocator, tab_id: u32, name: []const u8) !Tab {
         var tab = Tab{
@@ -50,35 +50,35 @@ pub const Tab = struct {
             .last_activity = std.time.timestamp(),
             .created_at = std.time.timestamp(),
         };
-        
+
         // Copy name with bounds checking
         const name_len = @min(name.len, tab.name.len - 1);
         @memcpy(tab.name[0..name_len], name[0..name_len]);
         tab.name[name_len] = 0;
-        
+
         // Initialize terminal with default size
         tab.terminal = try Terminal.init(allocator, 80, 24);
-        
+
         // Initialize PTY for this tab
         tab.pty = try PTY.init();
-        
+
         std.log.info("Created new tab '{}' with ID {}", .{ name, tab_id });
-        
+
         return tab;
     }
-    
+
     /// Clean up tab resources
     pub fn deinit(self: *Tab) void {
         std.log.info("Cleaning up tab '{}' with ID {}", .{ self.name, self.id });
         self.pty.deinit();
         self.terminal.deinit();
     }
-    
+
     /// Update tab activity timestamp
     pub fn updateActivity(self: *Tab) void {
         self.last_activity = std.time.timestamp();
     }
-    
+
     /// Get tab name as string
     pub fn getName(self: *const Tab) []const u8 {
         return std.mem.sliceTo(&self.name, 0);
@@ -89,19 +89,19 @@ pub const Tab = struct {
 pub const TabManager = struct {
     /// Memory allocator
     allocator: std.mem.Allocator,
-    
+
     /// Array of active tabs
     tabs: [MAX_TABS]?Tab,
-    
+
     /// Currently active tab index
     active_tab_index: ?usize,
-    
+
     /// Next tab ID to assign
     next_tab_id: u32,
-    
+
     /// Number of active tabs
     tab_count: u32,
-    
+
     /// Initialize tab manager
     pub fn init(allocator: std.mem.Allocator) TabManager {
         return TabManager{
@@ -112,7 +112,7 @@ pub const TabManager = struct {
             .tab_count = 0,
         };
     }
-    
+
     /// Clean up all tabs
     pub fn deinit(self: *TabManager) void {
         for (&self.tabs) |*maybe_tab| {
@@ -123,48 +123,48 @@ pub const TabManager = struct {
         }
         std.log.info("Tab manager cleanup complete");
     }
-    
+
     /// Create a new tab
     pub fn createTab(self: *TabManager, name: []const u8) !u32 {
         if (self.tab_count >= MAX_TABS) {
             return error.TooManyTabs;
         }
-        
+
         // Find first available slot
         for (&self.tabs, 0..) |*maybe_tab, index| {
             if (maybe_tab.* == null) {
                 const tab_id = self.next_tab_id;
                 self.next_tab_id += 1;
-                
+
                 maybe_tab.* = try Tab.init(self.allocator, tab_id, name);
                 self.tab_count += 1;
-                
+
                 // If this is the first tab, make it active
                 if (self.active_tab_index == null) {
                     self.active_tab_index = index;
                     maybe_tab.*.?.is_active = true;
                 }
-                
+
                 std.log.info("Created tab '{}' in slot {} (total: {})", .{ name, index, self.tab_count });
                 return tab_id;
             }
         }
-        
+
         return error.NoAvailableSlots;
     }
-    
+
     /// Switch to a specific tab by index (0-9)
     pub fn switchToTab(self: *TabManager, tab_index: usize) bool {
         if (tab_index >= MAX_TABS) return false;
         if (self.tabs[tab_index] == null) return false;
-        
+
         // Deactivate current tab
         if (self.active_tab_index) |current_index| {
             if (self.tabs[current_index]) |*current_tab| {
                 current_tab.is_active = false;
             }
         }
-        
+
         // Activate new tab
         self.active_tab_index = tab_index;
         if (self.tabs[tab_index]) |*new_tab| {
@@ -173,29 +173,29 @@ pub const TabManager = struct {
             std.log.info("Switched to tab '{}' (index {})", .{ new_tab.getName(), tab_index });
             return true;
         }
-        
+
         return false;
     }
-    
+
     /// Close a specific tab
     pub fn closeTab(self: *TabManager, tab_index: usize) bool {
         if (tab_index >= MAX_TABS) return false;
         if (self.tabs[tab_index] == null) return false;
-        
+
         // Clean up the tab
         if (self.tabs[tab_index]) |*tab| {
             const tab_name = tab.getName();
             std.log.info("Closing tab '{}' (index {})", .{ tab_name, tab_index });
             tab.deinit();
         }
-        
+
         self.tabs[tab_index] = null;
         self.tab_count -= 1;
-        
+
         // If we closed the active tab, switch to another one
         if (self.active_tab_index == tab_index) {
             self.active_tab_index = null;
-            
+
             // Find the next available tab
             for (&self.tabs, 0..) |*maybe_tab, index| {
                 if (maybe_tab.* != null) {
@@ -204,10 +204,10 @@ pub const TabManager = struct {
                 }
             }
         }
-        
+
         return true;
     }
-    
+
     /// Get currently active tab
     pub fn getActiveTab(self: *TabManager) ?*Tab {
         if (self.active_tab_index) |index| {
@@ -217,7 +217,7 @@ pub const TabManager = struct {
         }
         return null;
     }
-    
+
     /// Get tab by index
     pub fn getTab(self: *TabManager, index: usize) ?*Tab {
         if (index >= MAX_TABS) return null;
@@ -226,7 +226,7 @@ pub const TabManager = struct {
         }
         return null;
     }
-    
+
     /// Render tab headers in DVUI
     pub fn renderTabHeaders(self: *TabManager) !void {
         var tab_bar = try dvui.box(@src(), .horizontal, .{
@@ -238,13 +238,13 @@ pub const TabManager = struct {
             .id_extra = 20000, // Unique ID for tab bar
         });
         defer tab_bar.deinit();
-        
+
         // Render individual tab buttons
         for (&self.tabs, 0..) |*maybe_tab, index| {
             if (maybe_tab.*) |*tab| {
                 const is_active = self.active_tab_index == index;
                 const tab_name = tab.getName();
-                
+
                 // Tab button with different colors for active/inactive
                 var tab_button = try dvui.box(@src(), .horizontal, .{
                     .min_size_content = .{ .w = 120, .h = 28 },
@@ -259,7 +259,7 @@ pub const TabManager = struct {
                     .id_extra = @as(u32, @intCast(20001 + index)), // Unique ID per tab
                 });
                 defer tab_button.deinit();
-                
+
                 // Tab close button (small red X)
                 var close_button = try dvui.box(@src(), .horizontal, .{
                     .min_size_content = .{ .w = 16, .h = 16 },
@@ -271,7 +271,7 @@ pub const TabManager = struct {
                 defer close_button.deinit();
             }
         }
-        
+
         // New tab button (+)
         if (self.tab_count < MAX_TABS) {
             var new_tab_button = try dvui.box(@src(), .horizontal, .{
@@ -284,7 +284,7 @@ pub const TabManager = struct {
             defer new_tab_button.deinit();
         }
     }
-    
+
     /// Handle keyboard shortcuts for tab management
     pub fn handleTabShortcuts(self: *TabManager, key: u32, modifiers: u32) bool {
         // Ctrl+1 through Ctrl+9 to switch tabs
@@ -293,7 +293,7 @@ pub const TabManager = struct {
                 const tab_index = key - '1';
                 return self.switchToTab(tab_index);
             }
-            
+
             // Ctrl+T to create new tab
             if (key == 't' or key == 'T') {
                 const tab_name = std.fmt.allocPrint(self.allocator, "Tab {}", .{self.tab_count + 1}) catch "New Tab";
@@ -301,7 +301,7 @@ pub const TabManager = struct {
                 _ = self.createTab(tab_name) catch false;
                 return true;
             }
-            
+
             // Ctrl+W to close current tab
             if (key == 'w' or key == 'W') {
                 if (self.active_tab_index) |index| {
@@ -309,7 +309,7 @@ pub const TabManager = struct {
                 }
             }
         }
-        
+
         return false;
     }
 };

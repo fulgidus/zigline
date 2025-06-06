@@ -80,17 +80,17 @@ pub const Gui = struct {
     /// Deinitializes DVUI window and SDL backend
     pub fn deinit(self: *Self) void {
         std.log.info("Starting GUI cleanup...", .{});
-        
+
         // Ensure window is properly closed
         self.window.deinit();
         std.log.debug("DVUI window deinitialized", .{});
-        
+
         // Force SDL cleanup if not already done
         _ = Backend.c.SDL_DestroyWindow(self.backend.window);
         self.backend.deinit();
         _ = Backend.c.SDL_QuitSubSystem(Backend.c.SDL_INIT_VIDEO);
         Backend.c.SDL_Quit();
-        
+
         std.log.info("GUI cleanup complete", .{});
     }
 
@@ -173,12 +173,12 @@ pub const Gui = struct {
             // If exit was requested, break after properly ending the frame
             if (self.should_exit) {
                 std.log.info("Exit requested, ending frame and breaking loop", .{});
-                
+
                 // Properly end the DVUI frame before exiting
                 _ = self.window.end(.{}) catch |err| {
                     std.log.warn("Error ending DVUI frame during shutdown: {any}", .{err});
                 };
-                
+
                 break :main_loop;
             }
 
@@ -215,12 +215,12 @@ pub const Gui = struct {
         }
 
         std.log.info("Main loop exited, performing cleanup...", .{});
-        
+
         // Perform final cleanup
         _ = Backend.c.SDL_DestroyWindow(self.backend.window);
         _ = Backend.c.SDL_QuitSubSystem(Backend.c.SDL_INIT_VIDEO);
         Backend.c.SDL_Quit();
-        
+
         std.log.info("Final cleanup complete", .{});
     }
 
@@ -323,7 +323,7 @@ pub const Gui = struct {
         _ = self;
 
         // Handle Ctrl combinations first - these are critical for terminal control
-        if (key_event.mod.intersects(.{ .lcontrol = true }) or key_event.mod.intersects(.{ .rcontrol = true })) {
+        if (key_event.mod.control()) {
             switch (key_event.code) {
                 dvui.enums.Key.a => return "\x01", // Ctrl+A
                 dvui.enums.Key.b => return "\x02", // Ctrl+B
@@ -394,34 +394,34 @@ pub const Gui = struct {
             dvui.enums.Key.delete => return "\x1b[3~",
 
             // Basic alphanumeric keys - only if no modifiers
-            dvui.enums.Key.a => return if (key_event.mod.isEmpty()) "a" else "",
-            dvui.enums.Key.b => return if (key_event.mod.isEmpty()) "b" else "",
-            dvui.enums.Key.c => return if (key_event.mod.isEmpty()) "c" else "",
-            dvui.enums.Key.d => return if (key_event.mod.isEmpty()) "d" else "",
-            dvui.enums.Key.e => return if (key_event.mod.isEmpty()) "e" else "",
-            dvui.enums.Key.f => return if (key_event.mod.isEmpty()) "f" else "",
-            dvui.enums.Key.g => return if (key_event.mod.isEmpty()) "g" else "",
-            dvui.enums.Key.h => return if (key_event.mod.isEmpty()) "h" else "",
-            dvui.enums.Key.i => return if (key_event.mod.isEmpty()) "i" else "",
-            dvui.enums.Key.j => return if (key_event.mod.isEmpty()) "j" else "",
-            dvui.enums.Key.k => return if (key_event.mod.isEmpty()) "k" else "",
-            dvui.enums.Key.l => return if (key_event.mod.isEmpty()) "l" else "",
-            dvui.enums.Key.m => return if (key_event.mod.isEmpty()) "m" else "",
-            dvui.enums.Key.n => return if (key_event.mod.isEmpty()) "n" else "",
-            dvui.enums.Key.o => return if (key_event.mod.isEmpty()) "o" else "",
-            dvui.enums.Key.p => return if (key_event.mod.isEmpty()) "p" else "",
-            dvui.enums.Key.q => return if (key_event.mod.isEmpty()) "q" else "",
-            dvui.enums.Key.r => return if (key_event.mod.isEmpty()) "r" else "",
-            dvui.enums.Key.s => return if (key_event.mod.isEmpty()) "s" else "",
-            dvui.enums.Key.t => return if (key_event.mod.isEmpty()) "t" else "",
-            dvui.enums.Key.u => return if (key_event.mod.isEmpty()) "u" else "",
-            dvui.enums.Key.v => return if (key_event.mod.isEmpty()) "v" else "",
-            dvui.enums.Key.w => return if (key_event.mod.isEmpty()) "w" else "",
-            dvui.enums.Key.x => return if (key_event.mod.isEmpty()) "x" else "",
-            dvui.enums.Key.y => return if (key_event.mod.isEmpty()) "y" else "",
-            dvui.enums.Key.z => return if (key_event.mod.isEmpty()) "z" else "",
+            dvui.enums.Key.a => return if (key_event.mod == .none) "a" else "",
+            dvui.enums.Key.b => return if (key_event.mod == .none) "b" else "",
+            dvui.enums.Key.c => return if (key_event.mod == .none) "c" else "",
+            dvui.enums.Key.d => return if (key_event.mod == .none) "d" else "",
+            dvui.enums.Key.e => return if (key_event.mod == .none) "e" else "",
+            dvui.enums.Key.f => return if (key_event.mod == .none) "f" else "",
+            dvui.enums.Key.g => return if (key_event.mod == .none) "g" else "",
+            dvui.enums.Key.h => return if (key_event.mod == .none) "h" else "",
+            dvui.enums.Key.i => return if (key_event.mod == .none) "i" else "",
+            dvui.enums.Key.j => return if (key_event.mod == .none) "j" else "",
+            dvui.enums.Key.k => return if (key_event.mod == .none) "k" else "",
+            dvui.enums.Key.l => return if (key_event.mod == .none) "l" else "",
+            dvui.enums.Key.m => return if (key_event.mod == .none) "m" else "",
+            dvui.enums.Key.n => return if (key_event.mod == .none) "n" else "",
+            dvui.enums.Key.o => return if (key_event.mod == .none) "o" else "",
+            dvui.enums.Key.p => return if (key_event.mod == .none) "p" else "",
+            dvui.enums.Key.q => return if (key_event.mod == .none) "q" else "",
+            dvui.enums.Key.r => return if (key_event.mod == .none) "r" else "",
+            dvui.enums.Key.s => return if (key_event.mod == .none) "s" else "",
+            dvui.enums.Key.t => return if (key_event.mod == .none) "t" else "",
+            dvui.enums.Key.u => return if (key_event.mod == .none) "u" else "",
+            dvui.enums.Key.v => return if (key_event.mod == .none) "v" else "",
+            dvui.enums.Key.w => return if (key_event.mod == .none) "w" else "",
+            dvui.enums.Key.x => return if (key_event.mod == .none) "x" else "",
+            dvui.enums.Key.y => return if (key_event.mod == .none) "y" else "",
+            dvui.enums.Key.z => return if (key_event.mod == .none) "z" else "",
             dvui.enums.Key.space => return " ",
-            
+
             // Numbers
             dvui.enums.Key.zero => return "0",
             dvui.enums.Key.one => return "1",
@@ -435,12 +435,7 @@ pub const Gui = struct {
             dvui.enums.Key.nine => return "9",
 
             // Control keys that don't produce output but are important for terminal
-            dvui.enums.Key.left_control,
-            dvui.enums.Key.right_control,
-            dvui.enums.Key.left_shift,
-            dvui.enums.Key.right_shift,
-            dvui.enums.Key.left_alt,
-            dvui.enums.Key.right_alt => return "",
+            dvui.enums.Key.left_control, dvui.enums.Key.right_control, dvui.enums.Key.left_shift, dvui.enums.Key.right_shift, dvui.enums.Key.left_alt, dvui.enums.Key.right_alt => return "",
 
             else => {
                 // For unhandled keys, let text events handle them
@@ -868,7 +863,7 @@ pub const Gui = struct {
 
         // Always log status for debugging
         if (self.frame_count % 30 == 0) {
-            std.log.info("Visual render: {} chars visible, cursor at ({},{}), frame {}, PTY alive: {}", .{ 
+            std.log.info("Visual render: {} chars visible, cursor at ({},{}), frame {}, PTY alive: {}", .{
                 visible_chars,
                 self.terminal.cursor_x,
                 self.terminal.cursor_y,
