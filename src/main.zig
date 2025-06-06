@@ -47,10 +47,10 @@ fn initializeTerminal(allocator: std.mem.Allocator) !void {
     defer terminal.deinit();
 
     Logger.info("Terminal emulator initialized successfully", .{});
-    Logger.info("Terminal size: {}x{}", .{ terminal.buffer.width, terminal.buffer.height });
+    Logger.info("Terminal size: {d}x{d}", .{ terminal.buffer.width, terminal.buffer.height });
 
     const cursor_pos = terminal.getCursorPosition();
-    Logger.debug("Cursor position: {},{}", .{ cursor_pos.x, cursor_pos.y });
+    Logger.debug("Cursor position: {d},{d}", .{ cursor_pos.x, cursor_pos.y });
 
     // Initialize PTY for shell communication (Fase 2)
     var pty = PTY.init(allocator) catch |err| {
@@ -92,7 +92,7 @@ fn initializeTerminalWithGui(allocator: std.mem.Allocator) !void {
     defer terminal.deinit();
 
     Logger.info("Terminal emulator initialized successfully", .{});
-    Logger.info("Terminal size: {}x{}", .{ terminal.buffer.width, terminal.buffer.height });
+    Logger.info("Terminal size: {d}x{d}", .{ terminal.buffer.width, terminal.buffer.height });
 
     // Initialize PTY for shell communication
     var pty = PTY.init(allocator) catch |err| {
@@ -111,7 +111,7 @@ fn initializeTerminalWithGui(allocator: std.mem.Allocator) !void {
     try gui.run();
 
     Logger.info("GUI main loop completed, performing cleanup", .{});
-    
+
     // PTY cleanup is handled by GUI deinit, no need for explicit cleanup here
 }
 
@@ -354,7 +354,7 @@ fn testAnsiProcessing(allocator: std.mem.Allocator) !void {
         Logger.debug("Processing ANSI sequence {}: '{s}'", .{ i + 1, sequence });
 
         try ansi_processor.processInput(sequence, &buffer, &cursor_x, &cursor_y);
-        Logger.debug("Cursor position after sequence {}: {},{}", .{ i + 1, cursor_x, cursor_y });
+        Logger.debug("Cursor position after sequence {d}: {d},{d}", .{ i + 1, cursor_x, cursor_y });
 
         // Log the content of a few cells to show buffer state
         if (cursor_y < buffer.height) {

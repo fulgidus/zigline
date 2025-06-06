@@ -28,7 +28,7 @@ pub const Terminal = struct {
 
     /// Initialize terminal with specified dimensions
     pub fn init(allocator: std.mem.Allocator, cols: u16, rows: u16) TerminalError!Terminal {
-        Logger.info("Initializing terminal with size {}x{}", .{ cols, rows });
+        Logger.info("Initializing terminal with size {d}x{d}", .{ cols, rows });
 
         // Initialize PTY
         const pty = PTY.init(allocator) catch |err| {
@@ -121,7 +121,7 @@ pub const Terminal = struct {
 
     /// Resize terminal and notify PTY
     pub fn resize(self: *Terminal, cols: u16, rows: u16) TerminalError!void {
-        Logger.info("Resizing terminal to {}x{}", .{ cols, rows });
+        Logger.info("Resizing terminal to {d}x{d}", .{ cols, rows });
 
         // Resize the buffer
         self.buffer.resize(cols, rows) catch |err| {

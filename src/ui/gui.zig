@@ -451,7 +451,7 @@ pub const Gui = struct {
 
     /// Handle window resize events and update PTY dimensions
     fn handleWindowResize(self: *Self, new_cols: u32, new_rows: u32) !void {
-        std.log.info("Window resize detected: {}x{} -> {}x{}", .{ self.terminal.buffer.width, self.terminal.buffer.height, new_cols, new_rows });
+        std.log.info("Window resize detected: {d}x{d} -> {d}x{d}", .{ self.terminal.buffer.width, self.terminal.buffer.height, new_cols, new_rows });
 
         // Update terminal buffer size
         const term_cols: u16 = @intCast(@min(new_cols, 65535));
@@ -465,7 +465,7 @@ pub const Gui = struct {
         const pty_cols: u16 = @intCast(@min(new_cols, 65535));
         self.pty.resize(pty_cols, pty_rows);
 
-        std.log.debug("Terminal resized successfully to {}x{}", .{ new_cols, new_rows });
+        std.log.debug("Terminal resized successfully to {d}x{d}", .{ new_cols, new_rows });
     }
 
     /// Render the terminal interface using DVUI

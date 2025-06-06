@@ -8,14 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Fase 2 Complete**: PTY (Pseudo Terminal) management system
+- **Phase 5 Complete**: Raylib GUI Integration with FiraCode Font Support
+  - Stable Raylib-based GUI backend replacing problematic DVUI implementation
+  - FiraCode monospace font integration with automatic loading and fallback system
+  - Custom font rendering with precise character metrics (8x16 pixels)
+  - Programming ligatures support for enhanced code readability
+  - Cross-platform X11/GLFW display backend with OpenGL rendering
+  - Real-time terminal content rendering with custom font support
+  - Proper resource management with automatic font cleanup
+  - Enhanced status display showing PTY status, cursor position, and frame counter
+- **Phase 2 Complete**: PTY (Pseudo Terminal) management system
   - PTY initialization and shell spawning functionality
   - Shell process communication with pipe-based approach
   - Non-blocking data availability checking with `hasData()` method
   - Timeout-based reading with `readWithTimeout()` method
   - Proper process cleanup and PTY deinitialization
   - Enhanced PTY testing with multiple shell commands
-- **Fase 3 Complete**: ANSI escape sequence parsing and terminal buffer management
+- **Phase 3 Complete**: ANSI escape sequence parsing and terminal buffer management
   - Complete ANSI parser with state machine for escape sequence processing
   - Terminal buffer with cell-based character storage and attribute support
   - ANSI processor integration for real-time terminal output processing
@@ -26,7 +35,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Integration testing of ANSI processing with terminal buffer
 
 ### Fixed
-- Compilation errors in Zig 0.14.0 compatibility
+- **UI Stability**: Completely resolved "ogni rerender cancella la ui" (UI clearing on every render) issue
+  - Migrated from unstable DVUI backend to stable Raylib implementation
+  - Fixed string type mismatches in font loading functions ([:0]const u8 vs [*:0]const u8)
+  - Corrected raylib function calls to use proper raylib-zig binding syntax
+  - Fixed loadFontEx function call parameters (removed incorrect fourth parameter)
+  - Resolved all logging format string requirements for Zig 0.14.0
+- **Build System**: Fixed all compilation errors for Zig 0.14.0 compatibility
+  - Resolved X11 development dependencies for raylib compilation
   - Fixed PTY module file descriptor type issues (os.fd_t → posix.fd_t)
   - Updated all os.* calls to posix.* equivalents
   - Fixed ChildProcess reference (std.process.Child)

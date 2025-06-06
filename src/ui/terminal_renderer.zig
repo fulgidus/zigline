@@ -78,7 +78,7 @@ pub const TerminalRenderer = struct {
                 //     .color_fill = .{ .color = bg },
                 //     .expand = .none,
                 // });
-                
+
                 // Instead, render as a colored box
                 var char_box = try dvui.box(src, .horizontal, .{
                     .min_size_content = .{ .w = self.font_size * 0.6, .h = self.font_size },

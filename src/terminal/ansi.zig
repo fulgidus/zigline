@@ -356,11 +356,23 @@ pub const AnsiProcessor = struct {
             },
             'J' => { // Erase in Display
                 const n = parseFirstParam(params) orelse 0;
+                std.log.info("Processing clear display command (CSI {}J)", .{n});
                 switch (n) {
-                    0 => buffer.clearFromCursor(cursor_x.*, cursor_y.*),
-                    1 => buffer.clearToCursor(cursor_x.*, cursor_y.*),
-                    2 => buffer.clearAll(),
-                    else => {},
+                    0 => {
+                        std.log.info("Clearing from cursor to end of screen", .{});
+                        buffer.clearFromCursor(cursor_x.*, cursor_y.*);
+                    },
+                    1 => {
+                        std.log.info("Clearing from start of screen to cursor", .{});
+                        buffer.clearToCursor(cursor_x.*, cursor_y.*);
+                    },
+                    2 => {
+                        std.log.info("Clearing entire screen", .{});
+                        buffer.clearAll();
+                    },
+                    else => {
+                        std.log.warn("Unknown clear display parameter: {}", .{n});
+                    },
                 }
             },
             'K' => { // Erase in Line

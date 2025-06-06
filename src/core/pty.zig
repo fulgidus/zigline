@@ -2,6 +2,7 @@
 //! Handles PTY creation, process spawning, and communication with child processes.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const os = std.os;
 const posix = std.posix;
 const Logger = @import("logger.zig");
@@ -20,6 +21,7 @@ pub const PTYError = error{
     ReadFailed,
     WriteFailed,
     WouldBlock,
+    OutOfMemory,
 };
 
 /// PTY management structure
@@ -73,6 +75,11 @@ pub const PTY = struct {
 
     /// Terminate child process gracefully
     pub fn terminateChild(self: *PTY) void {
+        if (self.child_terminated) {
+            Logger.info("Child process {d} already terminated", .{self.child_pid});
+            return;
+        }
+        
         Logger.info("Terminating child process {d}", .{self.child_pid});
 
         // Check if child is still alive - handle race conditions properly
@@ -101,7 +108,15 @@ pub const PTY = struct {
                 // Final wait without WNOHANG (but should be quick now)
                 const final_result = posix.waitpid(self.child_pid, 0);
                 Logger.debug("Final waitpid result: pid={}, status={}", .{ final_result.pid, final_result.status });
+            } else {
+                Logger.info("Child process terminated after SIGTERM", .{});
             }
+        } else {
+            // Child has already exited
+            Logger.info("Child process {d} has already exited with status: {d}", .{ wait_result.pid, wait_result.status });
+        }
+        
+        self.child_terminated = true;
         }
 
         Logger.info("Child process termination complete", .{});
@@ -137,12 +152,34 @@ pub const PTY = struct {
 
     /// Resize PTY to match terminal window size
     pub fn resize(self: *PTY, cols: u16, rows: u16) void {
-        Logger.debug("Resizing PTY to {}x{}", .{ cols, rows });
+        Logger.debug("Resizing PTY to {d}x{d}", .{ cols, rows });
 
-        // Note: On macOS, resizing PTY would require proper ioctl calls
-        // For now, this is a placeholder - in a production system you'd use
-        // platform-specific ioctl calls to set the window size
-        _ = self;
+        // Set window size using TIOCSWINSZ ioctl
+        if (builtin.os.tag == .linux) {
+            const TIOCSWINSZ = 0x5414;
+            const winsize = extern struct {
+                ws_row: u16,
+                ws_col: u16,
+                ws_xpixel: u16,
+                ws_ypixel: u16,
+            };
+
+            const ws = winsize{
+                .ws_row = rows,
+                .ws_col = cols,
+                .ws_xpixel = 0,
+                .ws_ypixel = 0,
+            };
+
+            const result = std.c.ioctl(self.master_fd, TIOCSWINSZ, &ws);
+            if (result != 0) {
+                Logger.warn("Failed to set PTY window size: ioctl returned {d}", .{result});
+            } else {
+                Logger.info("PTY window size set to {d}x{d} successfully", .{ cols, rows });
+            }
+        } else {
+            Logger.warn("PTY resize not implemented for this platform", .{});
+        }
     }
 
     /// Check if PTY has data available for reading
@@ -180,6 +217,7 @@ pub const PTY = struct {
         } else if (result.pid == self.child_pid) {
             // Child has exited
             Logger.warn("Child process {d} has exited with status: {d}", .{ self.child_pid, result.status });
+            self.child_terminated = true;
             return false;
         }
 
@@ -299,8 +337,27 @@ fn spawnShell(slave_fd: posix.fd_t) PTYError!posix.pid_t {
             null,
         };
 
-        // Set up environment - use correct type for Zig 0.14
-        const envp: [*:null]const ?[*:0]const u8 = @ptrCast(&[_:null]?[*:0]const u8{null});
+        // Set up environment with TERM variable and other essential variables
+        const allocator = arena.allocator();
+        var env_list = std.ArrayList([*:0]const u8).init(allocator);
+
+        // Essential environment variables for terminal operation
+        try env_list.append(try allocator.dupeZ(u8, "TERM=xterm-256color"));
+        try env_list.append(try allocator.dupeZ(u8, "COLORTERM=truecolor"));
+
+        // Copy some existing environment variables if they exist
+        const important_vars = [_][]const u8{ "PATH", "HOME", "USER", "SHELL", "LANG", "LC_ALL" };
+        for (important_vars) |var_name| {
+            if (posix.getenv(var_name)) |value| {
+                const env_string = try std.fmt.allocPrintZ(allocator, "{s}={s}", .{ var_name, value });
+                try env_list.append(env_string);
+            }
+        }
+
+        // Add null terminator
+        try env_list.append(@as([*:0]const u8, @ptrCast(@as([*:0]const u8, ""))));
+
+        const envp: [*:null]const ?[*:0]const u8 = @ptrCast(env_list.items.ptr);
 
         Logger.info("Executing shell: {s} with args: {s}", .{ shell, "-l" });
         const exec_result = posix.execveZ(@constCast(shell.ptr), &argv, envp);

@@ -19,14 +19,20 @@ pub const RaylibGui = struct {
     font_size: i32 = 16,
     char_width: f32 = 9.0,
     char_height: f32 = 16.0,
+    custom_font: ?rl.Font = null,
 
-    // Terminal display settings
+    // Terminal display settings (dynamically calculated)
     cols: u32 = 120,
     rows: u32 = 40,
+    margin_x: f32 = 10.0,
+    margin_y: f32 = 10.0,
+    status_bar_height: f32 = 25.0,
 
     // State
     should_exit: bool = false,
     frame_count: u64 = 0,
+    last_window_width: i32 = 0,
+    last_window_height: i32 = 0,
 
     const Self = @This();
 
@@ -44,17 +50,34 @@ pub const RaylibGui = struct {
         defer rl.closeWindow();
 
         rl.setTargetFPS(60);
+
+        // Load FiraCode font
+        self.loadCustomFont();
+        defer if (self.custom_font) |font| {
+            rl.unloadFont(font);
+        };
+
         std.log.info("Raylib window initialized successfully", .{});
+
+        // Calculate initial terminal dimensions
+        try self.updateTerminalDimensions();
+        std.log.info("Initial terminal dimensions: {d}x{d}", .{ self.cols, self.rows });
 
         // Main loop
         while (!rl.windowShouldClose() and !self.should_exit) {
             self.frame_count += 1;
+
+            // Check for window resize and update terminal dimensions
+            try self.updateTerminalDimensions();
 
             // Handle input
             try self.handleInput();
 
             // Read PTY output
             try self.readPtyOutput();
+
+            // Update terminal dimensions
+            try self.updateTerminalDimensions();
 
             // Render
             self.render();
@@ -67,6 +90,50 @@ pub const RaylibGui = struct {
         }
 
         std.log.info("Raylib GUI exiting gracefully", .{});
+    }
+
+    fn loadCustomFont(self: *Self) void {
+        // Try to load FiraCode font from different locations
+        const font_paths = [_][:0]const u8{
+            "assets/fonts/ttf/FiraCode-Regular.ttf",
+            "assets/fonts/ttf/FiraCode-Medium.ttf",
+            "assets/fonts/variable_ttf/FiraCode-VF.ttf",
+        };
+
+        for (font_paths) |font_path| {
+            // Check if file exists before trying to load
+            if (std.fs.cwd().access(font_path, .{})) |_| {
+                std.log.info("Attempting to load font: {s}", .{font_path});
+
+                // Load font with the current font size
+                const font = rl.loadFontEx(font_path, self.font_size, null) catch {
+                    std.log.warn("Failed to load font: {s}", .{font_path});
+                    continue;
+                };
+
+                // Check if font loaded successfully (raylib returns default font on failure)
+                if (font.texture.id != 0) {
+                    self.custom_font = font;
+
+                    // Update character dimensions for monospace font
+                    // FiraCode is a monospace font, so we can calculate precise character metrics
+                    const sample_text = "M"; // Use 'M' as it's typically the widest character
+                    const text_size = rl.measureTextEx(font, sample_text, @as(f32, @floatFromInt(self.font_size)), 0);
+                    self.char_width = text_size.x;
+                    self.char_height = text_size.y;
+
+                    std.log.info("FiraCode font loaded successfully: {s}", .{font_path});
+                    std.log.info("Character dimensions: {d}x{d}", .{ self.char_width, self.char_height });
+                    return;
+                }
+            } else |_| {
+                // File doesn't exist, try next path
+                continue;
+            }
+        }
+
+        std.log.warn("Could not load FiraCode font, using default font", .{});
+        self.custom_font = null;
     }
 
     fn handleInput(self: *Self) !void {
@@ -99,7 +166,7 @@ pub const RaylibGui = struct {
             .tab => "\t",
             .escape => "\x1b",
             .up => "\x1b[A",
-                        .down => "\x1b[B",
+            .down => "\x1b[B",
             .right => "\x1b[C",
             .left => "\x1b[D",
             .home => "\x1b[H",
@@ -137,8 +204,33 @@ pub const RaylibGui = struct {
         };
 
         if (bytes_read > 0) {
-            std.log.debug("Read {} bytes from PTY", .{bytes_read});
+            // Log raw bytes for debugging
+            std.log.info("Read {} bytes from PTY: {any}", .{ bytes_read, buffer[0..bytes_read] });
+
+            // Check for specific sequences
+            const data = buffer[0..bytes_read];
+            if (std.mem.indexOf(u8, data, "\x1b[2J")) |_| {
+                std.log.info("🔍 DETECTED CLEAR SEQUENCE (ESC[2J) in PTY output!", .{});
+            }
+            if (std.mem.indexOf(u8, data, "\x1b[H")) |_| {
+                std.log.info("🔍 DETECTED HOME CURSOR SEQUENCE (ESC[H) in PTY output!", .{});
+            }
+            if (std.mem.indexOf(u8, data, "\x1b[1;1H")) |_| {
+                std.log.info("🔍 DETECTED CURSOR POSITION SEQUENCE (ESC[1;1H) in PTY output!", .{});
+            }
+
+            // Log as both hex and as printable characters for complete debug info
+            var hex_str: [512]u8 = undefined;
+            var hex_pos: usize = 0;
+            for (data) |byte| {
+                const written = std.fmt.bufPrint(hex_str[hex_pos..], "{X:0>2} ", .{byte}) catch break;
+                hex_pos += written.len;
+                if (hex_pos >= hex_str.len - 10) break;
+            }
+            std.log.info("PTY output as hex: {s}", .{hex_str[0..hex_pos]});
+
             try self.terminal.processData(buffer[0..bytes_read]);
+            std.log.info("✅ PTY data processed through terminal", .{});
         }
     }
 
@@ -162,13 +254,13 @@ pub const RaylibGui = struct {
     fn renderTerminalContent(self: *Self) void {
         const buffer = &self.terminal.buffer;
 
-        // Render each character in the terminal buffer
-        for (0..@min(buffer.height, self.rows)) |row| {
-            for (0..@min(buffer.width, self.cols)) |col| {
+        // Render each character in the terminal buffer using full available space
+        for (0..buffer.height) |row| {
+            for (0..buffer.width) |col| {
                 if (buffer.getCell(@intCast(col), @intCast(row))) |cell| {
                     if (cell.char > 0 and cell.char != ' ') {
-                        const x = @as(f32, @floatFromInt(col)) * self.char_width + 10;
-                        const y = @as(f32, @floatFromInt(row)) * self.char_height + 10;
+                        const x = @as(f32, @floatFromInt(col)) * self.char_width + self.margin_x;
+                        const y = @as(f32, @floatFromInt(row)) * self.char_height + self.margin_y;
 
                         // Convert cell.char (u21) to a string for drawing
                         var char_buffer: [4]u8 = undefined;
@@ -178,7 +270,13 @@ pub const RaylibGui = struct {
                         // Convert color
                         const color = self.convertColor(cell.fg_color);
 
-                        rl.drawText(@ptrCast(&char_buffer), @intFromFloat(x), @intFromFloat(y), self.font_size, color);
+                        // Use custom font if available, otherwise use default
+                        if (self.custom_font) |font| {
+                            const position = rl.Vector2{ .x = x, .y = y };
+                            rl.drawTextEx(font, @ptrCast(&char_buffer), position, @as(f32, @floatFromInt(self.font_size)), 0, color);
+                        } else {
+                            rl.drawText(@ptrCast(&char_buffer), @intFromFloat(x), @intFromFloat(y), self.font_size, color);
+                        }
                     }
                 }
             }
@@ -188,30 +286,55 @@ pub const RaylibGui = struct {
     fn renderCursor(self: *Self) void {
         // Blinking cursor
         if ((self.frame_count / 30) % 2 == 0) {
-            const x = @as(f32, @floatFromInt(self.terminal.cursor_x)) * self.char_width + 10;
-            const y = @as(f32, @floatFromInt(self.terminal.cursor_y)) * self.char_height + 10;
+            const x = @as(f32, @floatFromInt(self.terminal.cursor_x)) * self.char_width + self.margin_x;
+            const y = @as(f32, @floatFromInt(self.terminal.cursor_y)) * self.char_height + self.margin_y;
 
             rl.drawRectangle(@intFromFloat(x), @intFromFloat(y), @intFromFloat(self.char_width), @intFromFloat(self.char_height), rl.Color.yellow);
         }
     }
 
     fn renderStatus(self: *Self) void {
-        // Status line at bottom
-        const status_y = self.height - 25;
+        // Get current window dimensions
+        const current_width = rl.getScreenWidth();
+        const current_height = rl.getScreenHeight();
+
+        // Status line at bottom with proper margins
+        const status_y = current_height - @as(i32, @intFromFloat(self.status_bar_height));
 
         // PTY status
         const pty_color = if (self.pty.isChildAlive()) rl.Color.green else rl.Color.red;
-        rl.drawText("PTY", 10, status_y, 12, pty_color);
+        self.drawTextWithFont("PTY", @as(i32, @intFromFloat(self.margin_x)), status_y, 12, pty_color);
 
         // Cursor position
-        var pos_buffer: [32]u8 = undefined;
+        var pos_buffer: [64]u8 = undefined;
         const pos_text = std.fmt.bufPrintZ(&pos_buffer, "Cursor: {d},{d}", .{ self.terminal.cursor_x, self.terminal.cursor_y }) catch "Cursor: ?";
-        rl.drawText(@ptrCast(pos_text), 60, status_y, 12, rl.Color.white);
+        self.drawTextWithFont(@ptrCast(pos_text), @as(i32, @intFromFloat(self.margin_x)) + 60, status_y, 12, rl.Color.white);
 
-        // Frame counter
+        // Terminal dimensions
+        var dim_buffer: [64]u8 = undefined;
+        const dim_text = std.fmt.bufPrintZ(&dim_buffer, "Size: {d}x{d}", .{ self.cols, self.rows }) catch "Size: ?";
+        self.drawTextWithFont(@ptrCast(dim_text), @as(i32, @intFromFloat(self.margin_x)) + 180, status_y, 12, rl.Color.white);
+
+        // Window dimensions
+        var win_buffer: [64]u8 = undefined;
+        const win_text = std.fmt.bufPrintZ(&win_buffer, "Window: {d}x{d}", .{ current_width, current_height }) catch "Window: ?";
+        self.drawTextWithFont(@ptrCast(win_text), @as(i32, @intFromFloat(self.margin_x)) + 300, status_y, 12, rl.Color.gray);
+
+        // Frame counter (right side)
         var frame_buffer: [32]u8 = undefined;
         const frame_text = std.fmt.bufPrintZ(&frame_buffer, "Frame: {d}", .{self.frame_count}) catch "Frame: ?";
-        rl.drawText(@ptrCast(frame_text), 200, status_y, 12, rl.Color.gray);
+        self.drawTextWithFont(@ptrCast(frame_text), current_width - 120, status_y, 12, rl.Color.gray);
+    }
+
+    fn drawTextWithFont(self: *Self, text: [*:0]const u8, x: i32, y: i32, size: i32, color: rl.Color) void {
+        if (self.custom_font) |font| {
+            const position = rl.Vector2{ .x = @as(f32, @floatFromInt(x)), .y = @as(f32, @floatFromInt(y)) };
+            const text_slice: [:0]const u8 = std.mem.span(text);
+            rl.drawTextEx(font, text_slice, position, @as(f32, @floatFromInt(size)), 0, color);
+        } else {
+            const text_slice: [:0]const u8 = std.mem.span(text);
+            rl.drawText(text_slice, x, y, size, color);
+        }
     }
 
     fn convertColor(self: *Self, color: anytype) rl.Color {
@@ -229,5 +352,39 @@ pub const RaylibGui = struct {
             .white => rl.Color.white,
             else => rl.Color.white,
         };
+    }
+
+    fn updateTerminalDimensions(self: *Self) !void {
+        // Get current window size
+        const current_width = rl.getScreenWidth();
+        const current_height = rl.getScreenHeight();
+
+        // Check if window size changed
+        if (current_width != self.last_window_width or current_height != self.last_window_height) {
+            self.last_window_width = current_width;
+            self.last_window_height = current_height;
+
+            // Calculate available space for terminal content
+            const available_width = @as(f32, @floatFromInt(current_width)) - (self.margin_x * 2);
+            const available_height = @as(f32, @floatFromInt(current_height)) - (self.margin_y * 2) - self.status_bar_height;
+
+            // Calculate new terminal dimensions based on character size
+            const new_cols = @as(u32, @intFromFloat(@max(1, available_width / self.char_width)));
+            const new_rows = @as(u32, @intFromFloat(@max(1, available_height / self.char_height)));
+
+            // Update terminal dimensions if they changed
+            if (new_cols != self.cols or new_rows != self.rows) {
+                self.cols = new_cols;
+                self.rows = new_rows;
+
+                std.log.info("Window resized to {d}x{d}, terminal dimensions: {d}x{d}", .{ current_width, current_height, self.cols, self.rows });
+
+                // Resize terminal buffer
+                try self.terminal.resize(@intCast(self.cols), @intCast(self.rows));
+
+                // Notify PTY of new terminal size
+                self.pty.resize(@intCast(self.cols), @intCast(self.rows));
+            }
+        }
     }
 };
