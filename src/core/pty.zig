@@ -77,7 +77,7 @@ pub const PTY = struct {
 
         // Check if child is still alive - handle race conditions properly
         const wait_result = posix.waitpid(self.child_pid, 1); // WNOHANG
-        
+
         if (wait_result.pid == 0) {
             // Child is still running, send SIGTERM
             Logger.info("Child process still running, sending SIGTERM", .{});
@@ -90,7 +90,7 @@ pub const PTY = struct {
 
             // Check again
             const wait_result2 = posix.waitpid(self.child_pid, 1); // WNOHANG
-            
+
             if (wait_result2.pid == 0) {
                 // Still running, force kill
                 Logger.warn("Child process did not respond to SIGTERM, sending SIGKILL", .{});
@@ -147,15 +147,27 @@ pub const PTY = struct {
 
     /// Check if PTY has data available for reading
     pub fn hasData(self: *PTY) bool {
-        var buffer: [1]u8 = undefined;
-        const result = posix.read(self.master_fd, &buffer) catch |err| switch (err) {
-            error.WouldBlock => return false,
-            else => return false,
+        // Use poll() to check for data availability without consuming data
+        var poll_fd = [_]posix.pollfd{
+            .{
+                .fd = self.master_fd,
+                .events = posix.POLL.IN,
+                .revents = 0,
+            },
         };
 
-        // If we read data, we need to "put it back" - this is a simple check
-        // In a real implementation, you'd use select() or poll() to check availability
-        return result > 0;
+        // Poll with 0 timeout (non-blocking check)
+        const poll_result = posix.poll(&poll_fd, 0) catch |err| {
+            Logger.debug("Poll error in hasData(): {}", .{err});
+            return false;
+        };
+
+        // Check if data is available for reading
+        if (poll_result > 0 and (poll_fd[0].revents & posix.POLL.IN) != 0) {
+            return true;
+        }
+
+        return false;
     }
 
     /// Check if the child shell process is still alive

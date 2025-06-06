@@ -191,8 +191,8 @@ pub const Gui = struct {
             _ = Backend.c.SDL_SetRenderDrawColor(self.backend.renderer, 50, 50, 50, 255);
             _ = Backend.c.SDL_RenderClear(self.backend.renderer);
 
-            // Render the terminal interface using only colored boxes (no text to avoid SDL crashes)
-            self.renderTerminalBoxes() catch |err| {
+            // Render the terminal interface with actual text display
+            self.renderTerminal() catch |err| {
                 std.log.warn("Terminal rendering error: {any} - continuing", .{err});
             };
 
@@ -516,122 +516,24 @@ pub const Gui = struct {
         }
     }
 
-    /// Render the terminal buffer content with actual text and cursor
+    /// Render the terminal buffer content with boxes (NO TEXT to avoid SDL crash)
     fn renderTerminalContentSafe(self: *Self) !void {
         // Create a visual container for the terminal area
         var terminal_container = try dvui.box(@src(), .vertical, .{
             .expand = .both,
-            .color_fill = .{ .color = dvui.Color{ .r = 20, .g = 20, .b = 20 } }, // Dark terminal background
+            .background = true,
+            .color_fill = .{ .color = dvui.Color{ .r = 0, .g = 0, .b = 0 } }, // Pure black terminal background
             .margin = .{ .x = 10, .y = 10, .w = 10, .h = 10 },
         });
         defer terminal_container.deinit();
 
-        const buffer = &self.terminal.buffer;
-
-        // Always show a prompt line even if buffer is empty (for debugging)
-        try self.renderPromptLine();
-
-        // Render the first few lines of terminal content
-        for (0..@min(buffer.height, 10)) |row| {
-            try self.renderTerminalLine(@intCast(row));
-        }
-
-        // Show cursor position indicator
-        try self.renderCursor();
+        // Use box rendering to avoid SDL crashes - NO TEXT RENDERING!
+        try self.renderTerminalWithBoxes();
 
         // Log terminal content to console for debugging
         if (self.frame_count % 120 == 0) { // Every 2 seconds at 60fps
             self.logTerminalContent();
         }
-    }
-
-    /// Render a single terminal line with actual buffer content
-    fn renderTerminalLine(self: *Self, row: u32) !void {
-        const buffer = &self.terminal.buffer;
-
-        // Build the line content
-        var line_buffer: [128]u8 = undefined;
-        var line_pos: usize = 0;
-        var has_content = false;
-
-        for (0..@min(buffer.width, 80)) |col| {
-            if (buffer.getCell(@intCast(col), row)) |cell| {
-                const char = if (cell.char == 0) ' ' else @as(u8, @intCast(@min(cell.char, 255)));
-                if (line_pos < line_buffer.len - 1) {
-                    line_buffer[line_pos] = if (char < 32 and char != 0) '?' else char;
-                    line_pos += 1;
-                    if (char != ' ' and char != 0) {
-                        has_content = true;
-                    }
-                }
-            }
-        }
-
-        // Only render lines with content or the first line (for prompt)
-        if (has_content or row == 0) {
-            line_buffer[line_pos] = 0;
-            const line_text = line_buffer[0..line_pos];
-
-            // Create a stable ID for this line
-            var line_box = try dvui.box(@src(), .horizontal, .{
-                .expand = .horizontal,
-                .min_size_content = .{ .w = 0, .h = 16 },
-            });
-            defer line_box.deinit();
-
-            // Use a simple label instead of textEntry to avoid font texture issues
-            if (line_text.len > 0) {
-                try dvui.labelNoFmt(@src(), line_text, .{
-                    .expand = .horizontal,
-                });
-            }
-        }
-    }
-
-    /// Render a fallback prompt line when buffer is empty
-    fn renderPromptLine(self: *Self) !void {
-        const buffer = &self.terminal.buffer;
-
-        // Check if the first line is empty and show a default prompt
-        var first_line_empty = true;
-        for (0..@min(buffer.width, 10)) |col| {
-            if (buffer.getCell(@intCast(col), 0)) |cell| {
-                if (cell.char != 0 and cell.char != ' ') {
-                    first_line_empty = false;
-                    break;
-                }
-            }
-        }
-
-        if (first_line_empty) {
-            var prompt_box = try dvui.box(@src(), .horizontal, .{
-                .expand = .horizontal,
-                .min_size_content = .{ .w = 0, .h = 16 },
-                .margin = .{ .x = 5, .y = 2, .w = 5, .h = 2 },
-            });
-            defer prompt_box.deinit();
-
-            // Show a default shell prompt with simple label
-            try dvui.labelNoFmt(@src(), "$ ", .{});
-        }
-    }
-
-    /// Render cursor indicator
-    fn renderCursor(self: *Self) !void {
-        // Create a cursor indicator box
-        var cursor_box = try dvui.box(@src(), .horizontal, .{
-            .expand = .horizontal,
-            .min_size_content = .{ .w = 0, .h = 20 },
-            .margin = .{ .x = 5, .y = 5, .w = 5, .h = 5 },
-        });
-        defer cursor_box.deinit();
-
-        // Show cursor position and blinking state
-        const cursor_visible = (self.frame_count / 30) % 2 == 0; // Blink every 30 frames
-        var cursor_buffer: [64]u8 = undefined;
-        const cursor_text = try std.fmt.bufPrint(&cursor_buffer, "Cursor: ({d},{d}) {s}", .{ self.terminal.cursor_x, self.terminal.cursor_y, if (cursor_visible) "█" else "_" });
-
-        try dvui.labelNoFmt(@src(), cursor_text, .{});
     }
 
     /// Log terminal buffer content to console for debugging
@@ -799,7 +701,7 @@ pub const Gui = struct {
     /// Render terminal using colored boxes to represent characters (no text to avoid SDL crashes)
     fn renderTerminalWithBoxes(self: *Self) !void {
         const buffer = &self.terminal.buffer;
-        
+
         // Create a grid of boxes to represent the terminal characters
         var grid_container = try dvui.box(@src(), .vertical, .{
             .expand = .both,
@@ -822,9 +724,9 @@ pub const Gui = struct {
             for (0..@min(buffer.width, 80)) |col| {
                 const has_char = if (buffer.getCell(@intCast(col), @intCast(row))) |cell| cell.char > 0 and cell.char != ' ' else false;
                 const is_cursor = (row == self.terminal.cursor_y and col == self.terminal.cursor_x);
-                
+
                 // Choose color based on content and cursor position
-                const box_color = if (is_cursor and (self.frame_count / 30) % 2 == 0) 
+                const box_color = if (is_cursor and (self.frame_count / 30) % 2 == 0)
                     dvui.Color{ .r = 255, .g = 255, .b = 0 } // Yellow cursor
                 else if (has_char)
                     dvui.Color{ .r = 0, .g = 200, .b = 0 } // Green for characters
@@ -858,10 +760,12 @@ pub const Gui = struct {
         var pty_status_box = try dvui.box(@src(), .horizontal, .{
             .min_size_content = .{ .w = 20, .h = 15 },
             .background = true,
-            .color_fill = .{ .color = if (pty_alive) 
-                dvui.Color{ .r = 0, .g = 255, .b = 0 } // Green if alive
-            else 
-                dvui.Color{ .r = 255, .g = 0, .b = 0 } }, // Red if dead
+            .color_fill = .{
+                .color = if (pty_alive)
+                    dvui.Color{ .r = 0, .g = 255, .b = 0 } // Green if alive
+                else
+                    dvui.Color{ .r = 255, .g = 0, .b = 0 },
+            }, // Red if dead
             .margin = .{ .x = 5, .y = 0, .w = 5, .h = 0 },
             .id_extra = 60000,
         });
@@ -889,10 +793,8 @@ pub const Gui = struct {
 
         // Log status occasionally
         if (self.frame_count % 60 == 0) {
-            std.log.info("Terminal rendered using boxes: cursor ({d},{d}), PTY alive: {}, frame: {d}", .{
-                self.terminal.cursor_x, self.terminal.cursor_y, pty_alive, self.frame_count
-            });
-            
+            std.log.info("Terminal rendered using boxes: cursor ({d},{d}), PTY alive: {}, frame: {d}", .{ self.terminal.cursor_x, self.terminal.cursor_y, pty_alive, self.frame_count });
+
             // Log some buffer content
             var content_count: u32 = 0;
             for (0..@min(buffer.height, 5)) |row| {
@@ -912,7 +814,7 @@ pub const Gui = struct {
     fn renderTerminalBoxes(self: *Self) !void {
         const buffer = &self.terminal.buffer;
         var rendered_lines: u32 = 0;
-        
+
         for (0..@min(buffer.height, 25)) |row| {
             var line_has_content = false;
 
@@ -925,7 +827,7 @@ pub const Gui = struct {
                     }
                 }
             }
-            
+
             // Show line if it has content, or if it's cursor line, or first few lines
             if (line_has_content or row == self.terminal.cursor_y or row < 5) {
                 // Create a line box to represent terminal text
@@ -933,13 +835,13 @@ pub const Gui = struct {
                     .expand = .horizontal,
                     .min_size_content = .{ .w = 0, .h = 18 },
                     .background = true,
-                    .color_fill = .{ 
+                    .color_fill = .{
                         .color = if (row == self.terminal.cursor_y)
                             dvui.Color{ .r = 50, .g = 50, .b = 100 } // Blue for cursor line
                         else if (line_has_content)
                             dvui.Color{ .r = 30, .g = 30, .b = 30 } // Dark gray for content
                         else
-                            dvui.Color{ .r = 10, .g = 10, .b = 10 } // Very dark for empty lines
+                            dvui.Color{ .r = 10, .g = 10, .b = 10 }, // Very dark for empty lines
                     },
                     .margin = .{ .x = 0, .y = 1, .w = 0, .h = 1 },
                     .id_extra = @as(u32, @intCast(20010 + row)),
@@ -960,7 +862,7 @@ pub const Gui = struct {
                         defer cursor_box.deinit();
                     }
                 }
-                
+
                 rendered_lines += 1;
             }
         }
@@ -977,10 +879,8 @@ pub const Gui = struct {
         defer status_bar.deinit();
         // Log debug info occasionally - use std.log instead of labels to avoid font issues
         if (self.frame_count % 60 == 0) {
-            std.log.info("Terminal UI: {d} lines rendered, cursor at ({d},{d}), PTY alive: {}", .{
-                rendered_lines, self.terminal.cursor_x, self.terminal.cursor_y, self.pty.isChildAlive()
-            });
-            
+            std.log.info("Terminal UI: {d} lines rendered, cursor at ({d},{d}), PTY alive: {}", .{ rendered_lines, self.terminal.cursor_x, self.terminal.cursor_y, self.pty.isChildAlive() });
+
             // Log some buffer content for debugging
             for (0..@min(buffer.height, 3)) |row| {
                 var line_content: [81]u8 = undefined;
@@ -995,7 +895,7 @@ pub const Gui = struct {
                         }
                     }
                 }
-                
+
                 if (line_pos > 0) {
                     line_content[line_pos] = 0;
                     std.log.info("Buffer Line {d}: '{s}'", .{ row, line_content[0..line_pos] });
@@ -1022,7 +922,7 @@ pub const Gui = struct {
         //     .color_text = .{ .color = dvui.Color{ .r = 0, .g = 255, .b = 0 } }, // Green text
         //     .font_style = .title,
         // });
-        
+
         // Show terminal title as a colored box instead
         var title_box = try dvui.box(@src(), .horizontal, .{
             .expand = .horizontal,
@@ -1056,7 +956,7 @@ pub const Gui = struct {
             if (has_content or row < 3) {
                 line_text[pos] = 0;
                 // const line_str = line_text[0..pos]; // Unused since we're avoiding text rendering
-                
+
                 // Show line with cursor indicator if needed
                 if (row == self.terminal.cursor_y) {
                     // Cursor line - show with green background
@@ -1067,13 +967,13 @@ pub const Gui = struct {
                         .margin = .{ .x = 0, .y = 1, .w = 0, .h = 1 },
                     });
                     defer cursor_line.deinit();
-                    
+
                     // TEMPORARILY DISABLED: Text rendering causes SDL crash
                     // try dvui.labelNoFmt(@src(), line_str, .{
                     //     .color_text = .{ .color = dvui.Color{ .r = 255, .g = 255, .b = 255 } },
                     //     .font_style = .heading,
                     // });
-                    
+
                     // Show cursor position as colored box instead
                     var cursor_indicator = try dvui.box(@src(), .horizontal, .{
                         .min_size_content = .{ .w = 200, .h = 20 },
@@ -1087,10 +987,12 @@ pub const Gui = struct {
                         .expand = .horizontal,
                         .min_size_content = .{ .h = 18 },
                         .background = true,
-                        .color_fill = .{ .color = if (has_content) 
-                            dvui.Color{ .r = 50, .g = 50, .b = 50 } // Gray for content
-                        else 
-                            dvui.Color{ .r = 20, .g = 20, .b = 20 } }, // Dark gray for empty
+                        .color_fill = .{
+                            .color = if (has_content)
+                                dvui.Color{ .r = 50, .g = 50, .b = 50 } // Gray for content
+                            else
+                                dvui.Color{ .r = 20, .g = 20, .b = 20 },
+                        }, // Dark gray for empty
                     });
                     defer line_indicator.deinit();
                 }
@@ -1103,7 +1005,7 @@ pub const Gui = struct {
                 });
                 defer prompt_box.deinit();
             }
-        }        // Terminal status info - using colored boxes instead of text
+        } // Terminal status info - using colored boxes instead of text
         var status_box = try dvui.box(@src(), .horizontal, .{
             .expand = .horizontal,
             .min_size_content = .{ .h = 25 },
@@ -1111,21 +1013,23 @@ pub const Gui = struct {
             .color_fill = .{ .color = dvui.Color{ .r = 40, .g = 40, .b = 40 } }, // Gray status bar
         });
         defer status_box.deinit();
-        
+
         // Status indicators using colored boxes
         const pty_alive = self.pty.isChildAlive();
         var pty_indicator = try dvui.box(@src(), .horizontal, .{
             .min_size_content = .{ .w = 30, .h = 20 },
             .background = true,
-            .color_fill = .{ .color = if (pty_alive) 
-                dvui.Color{ .r = 0, .g = 255, .b = 0 } // Green if PTY alive
-            else 
-                dvui.Color{ .r = 255, .g = 0, .b = 0 } }, // Red if dead
+            .color_fill = .{
+                .color = if (pty_alive)
+                    dvui.Color{ .r = 0, .g = 255, .b = 0 } // Green if PTY alive
+                else
+                    dvui.Color{ .r = 255, .g = 0, .b = 0 },
+            }, // Red if dead
             .margin = .{ .x = 5, .y = 2, .w = 5, .h = 2 },
         });
         defer pty_indicator.deinit();
 
-        // Frame counter indicator  
+        // Frame counter indicator
         var frame_indicator = try dvui.box(@src(), .horizontal, .{
             .min_size_content = .{ .w = 40, .h = 20 },
             .background = true,
@@ -1135,5 +1039,113 @@ pub const Gui = struct {
         defer frame_indicator.deinit();
     }
 
-    // ...existing code...
+    /// Render terminal lines with actual text content from shell
+    fn renderTerminalTextLines(self: *Self) !void {
+        const buffer = &self.terminal.buffer;
+
+        // Create a scrollable area for the terminal text
+        var scroll_area = try dvui.scrollArea(@src(), .{}, .{
+            .expand = .both,
+            .background = true,
+            .color_fill = .{ .color = dvui.Color{ .r = 0, .g = 0, .b = 0 } }, // Black background
+        });
+        defer scroll_area.deinit();
+
+        // Render terminal lines with actual text
+        for (0..@min(buffer.height, 25)) |row| {
+            var line_buffer: [256]u8 = undefined;
+            var line_pos: usize = 0;
+            var has_content = false;
+
+            // Build line from buffer cells
+            for (0..@min(buffer.width, 200)) |col| {
+                if (buffer.getCell(@intCast(col), @intCast(row))) |cell| {
+                    const char_value = cell.char;
+                    var char: u8 = '?'; // Default for non-printable chars
+
+                    if (char_value == 0 or char_value == 32) { // 0 or space
+                        char = ' ';
+                    } else if (char_value >= 32 and char_value <= 126) { // Printable ASCII
+                        char = @as(u8, @intCast(char_value));
+                    }
+                    // else keeps the default '?'
+
+                    if (line_pos < line_buffer.len - 1) {
+                        line_buffer[line_pos] = char;
+                        line_pos += 1;
+                        if (char != ' ') has_content = true;
+                    }
+                }
+            }
+
+            // Trim trailing spaces
+            while (line_pos > 0 and line_buffer[line_pos - 1] == ' ') {
+                line_pos -= 1;
+            }
+
+            // Always render at least the first few lines, or lines with content
+            if (has_content or row < 5 or row == self.terminal.cursor_y) {
+                line_buffer[line_pos] = 0;
+                const line_text = line_buffer[0..line_pos];
+
+                // Create line container with cursor highlighting
+                var line_box = try dvui.box(@src(), .horizontal, .{
+                    .expand = .horizontal,
+                    .min_size_content = .{ .w = 0, .h = 20 },
+                    .background = row == self.terminal.cursor_y,
+                    .color_fill = .{
+                        .color = if (row == self.terminal.cursor_y)
+                            dvui.Color{ .r = 25, .g = 25, .b = 50 } // Slightly blue for cursor line
+                        else
+                            dvui.Color{ .r = 0, .g = 0, .b = 0 },
+                    },
+                    .margin = .{ .x = 5, .y = 1, .w = 5, .h = 1 },
+                    .id_extra = @as(u32, @intCast(1000 + row)),
+                });
+                defer line_box.deinit();
+
+                // Render the actual text using safe label rendering
+                if (line_text.len > 0 and line_text.len < 500) { // Limit text length to prevent issues
+                    // Use a safe text copy to avoid any encoding issues
+                    var safe_text: [500]u8 = undefined;
+                    const safe_len = @min(line_text.len, 200); // Even more conservative limit
+                    @memcpy(safe_text[0..safe_len], line_text[0..safe_len]);
+                    safe_text[safe_len] = 0;
+
+                    dvui.labelNoFmt(@src(), safe_text[0..safe_len], .{
+                        .color_text = .{ .color = dvui.Color{ .r = 200, .g = 200, .b = 200 } }, // Light gray text
+                        .font_style = .body,
+                    }) catch |err| {
+                        // If label rendering fails, show a simple indicator
+                        std.log.warn("Failed to render text line {d}: {any}", .{ row, err });
+                        dvui.labelNoFmt(@src(), "[text]", .{
+                            .color_text = .{ .color = dvui.Color{ .r = 100, .g = 100, .b = 100 } },
+                            .font_style = .body,
+                        }) catch {};
+                    };
+                } else if (row == 0) {
+                    // Show prompt on empty first line
+                    dvui.labelNoFmt(@src(), "$ ", .{
+                        .color_text = .{ .color = dvui.Color{ .r = 0, .g = 255, .b = 0 } }, // Green prompt
+                        .font_style = .body,
+                    }) catch |err| {
+                        std.log.warn("Failed to render prompt: {any}", .{err});
+                    };
+                }
+
+                // Add cursor indicator on cursor line
+                if (row == self.terminal.cursor_y) {
+                    const cursor_visible = (self.frame_count / 30) % 2 == 0;
+                    if (cursor_visible) {
+                        dvui.labelNoFmt(@src(), "█", .{
+                            .color_text = .{ .color = dvui.Color{ .r = 255, .g = 255, .b = 0 } }, // Yellow cursor
+                            .font_style = .body,
+                        }) catch |err| {
+                            std.log.warn("Failed to render cursor: {any}", .{err});
+                        };
+                    }
+                }
+            }
+        }
+    }
 };
