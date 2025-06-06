@@ -11,11 +11,11 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
-    // Add DVUI dependency for GUI rendering with SDL3 backend
-    const dvui = b.dependency("dvui", .{
+    // Add Raylib dependency for simple GUI rendering
+    const raylib_dep = b.dependency("raylib-zig", .{
         .target = target,
         .optimize = optimize,
-        .backend = .sdl3,
+        .linux_display_backend = .X11, // Force X11 backend to avoid wayland-scanner dependency
     });
 
     // Create the main executable for Zigline terminal emulator
@@ -29,8 +29,9 @@ pub fn build(b: *std.Build) void {
     // Link with libc for PTY functionality
     exe.linkLibC();
 
-    // Add DVUI module for GUI functionality
-    exe.root_module.addImport("dvui", dvui.module("dvui_sdl3"));
+    // Add Raylib module for GUI functionality
+    exe.root_module.addImport("raylib", raylib_dep.module("raylib"));
+    exe.linkLibrary(raylib_dep.artifact("raylib"));
 
     // Install the executable artifact to the prefix path
     b.installArtifact(exe);

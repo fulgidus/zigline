@@ -8,7 +8,7 @@ const PTY = @import("core/pty.zig").PTY;
 const TerminalBuffer = @import("terminal/buffer.zig").TerminalBuffer;
 const AnsiProcessor = @import("terminal/ansi.zig").AnsiProcessor;
 const InputProcessor = @import("input/processor.zig").InputProcessor;
-const Gui = @import("ui/gui.zig").Gui;
+const RaylibGui = @import("ui/raylib_gui.zig").RaylibGui;
 
 // Version constant following semantic versioning
 const VERSION = "0.3.0";
@@ -17,7 +17,7 @@ const VERSION = "0.3.0";
 pub fn main() !void {
     print("Zigline Terminal Emulator v{s}\n", .{VERSION});
     print("An experimental terminal emulator written in Zig\n", .{});
-    print("Phase 5: DVUI GUI Integration with Fira Code font\n", .{});
+    print("Phase 5: Raylib GUI Integration\n", .{});
     print("Starting GUI mode...\n\n", .{});
 
     // Initialize general purpose allocator
@@ -82,7 +82,7 @@ fn initializeTerminal(allocator: std.mem.Allocator) !void {
 
 // Initialize the terminal emulator with GUI (Phase 5)
 fn initializeTerminalWithGui(allocator: std.mem.Allocator) !void {
-    Logger.info("Initializing terminal emulator with DVUI GUI...", .{});
+    Logger.info("Initializing terminal emulator with Raylib GUI...", .{});
 
     // Create a basic terminal instance
     var terminal = Terminal.init(allocator, 80, 24) catch |err| {
@@ -99,33 +99,13 @@ fn initializeTerminalWithGui(allocator: std.mem.Allocator) !void {
         Logger.warn("Failed to initialize PTY: {} (continuing without PTY)", .{err});
         return err;
     };
-    // Defer PTY deinitialization until after GUI is done
-    // defer pty.deinit(); // Moved down
+    defer pty.deinit();
 
     Logger.info("PTY initialized successfully", .{});
 
-    Logger.info("Shell spawned successfully", .{});
-
-    // Initialize input processor (optional for GUI mode)
-    var input_processor_opt: ?InputProcessor = null;
-    if (InputProcessor.init(allocator)) |input_proc| {
-        input_processor_opt = input_proc;
-        Logger.info("Input processor initialized successfully", .{});
-    } else |err| {
-        Logger.warn("Failed to initialize input processor (continuing without terminal keyboard handling): {}", .{err});
-    }
-    defer if (input_processor_opt) |*input_proc| input_proc.deinit();
-
-    // Initialize GUI - pass PTY ownership to GUI
-    var gui = Gui.init(allocator, &terminal, if (input_processor_opt) |*ip| ip else null, &pty) catch |err| {
-        Logger.err("Failed to initialize GUI: {}", .{err});
-        pty.deinit(); // Clean up PTY if GUI init fails
-        return err;
-    };
-    defer gui.deinit();
-    // Note: PTY will be cleaned up by GUI deinit, no need for separate defer
-
-    Logger.info("GUI initialized successfully with DVUI", .{});
+    // Initialize Raylib GUI
+    var gui = RaylibGui.init(allocator, &terminal, &pty);
+    Logger.info("Raylib GUI initialized successfully", .{});
 
     // Run the GUI main loop
     try gui.run();

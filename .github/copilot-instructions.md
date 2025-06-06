@@ -1,4 +1,4 @@
-# v4-DVUI
+# v5-Raylib
 
 All comments and output for software must be in English, regardless of the user language used in the prompt. This includes:
 
@@ -94,7 +94,7 @@ When writing Zig code, follow these additional guidelines:
     -   `camelCase` for functions and methods.
     -   `snake_case` for variables, struct/union members, and source file names (`.zig`).
 -   Always refer to the most recent Zig documentation for best practices and language features, as Zig is actively developed and may introduce new features or changes that can improve code quality and performance.
--   Always refer to DVUI documentation for GUI-related tasks, as it provides a comprehensive guide on how to use the library effectively.
+-   Always refer to Raylib documentation for GUI-related tasks, as it provides a simple and effective API for graphics and input handling.
 
 # Testing
 
@@ -220,7 +220,7 @@ When adding logging and debug information:
 
 You are developing **Zigline**, a lightweight and modular terminal emulator written entirely in **Zig**. This is a personal, experimental, and early-stage project — not intended for production — aimed at learning, exploring Zig's systems capabilities, and building a basic but extensible terminal.
 
-You will implement core terminal emulator functionality (PTY, ANSI parsing, rendering, input), integrate a Zig-native GUI (DVUI), and layer in advanced features like tabbed sessions, session persistence, and user configuration.
+You will implement core terminal emulator functionality (PTY, ANSI parsing, rendering, input), integrate Raylib for graphics rendering, and layer in advanced features like tabbed sessions, session persistence, and user configuration.
 
 Each phase must be implemented and tested in isolation before proceeding to the next.
 
@@ -271,7 +271,7 @@ Each phase must be implemented and tested in isolation before proceeding to the 
 ## Phase 4: Input Handling
 
 -   Capture user keyboard input:
-    -   Use terminal raw mode (on Unix) or DVUI events
+    -   Use terminal raw mode (on Unix) or Raylib input events
     -   Read key events asynchronously or via polling
 -   Normalize special keys into ANSI sequences:
     -   Arrows, backspace, delete, enter, tab, etc.
@@ -280,16 +280,20 @@ Each phase must be implemented and tested in isolation before proceeding to the 
 
 ---
 
-## Phase 5: Graphical Rendering via DVUI
+## Phase 5: Graphical Rendering via Raylib
 
--   Add the DVUI dependency and integrate it into your `build.zig`
--   Create a basic DVUI application window
--   Render the buffer from Phase 3 inside a text grid:
-    -   Map ANSI colors and styles to DVUI primitives
-    -   Implement cursor drawing and blinking
+-   Add the Raylib dependency and integrate it into your `build.zig`
+-   Create a basic Raylib window with proper initialization
+-   Render the buffer from Phase 3 using Raylib's text drawing functions:
+    -   Map ANSI colors to Raylib Color structs
+    -   Use `DrawText()` or `DrawTextEx()` for character rendering
+    -   Implement cursor drawing and blinking using simple rectangles
 -   Handle window resize events:
+    -   Calculate new terminal dimensions based on font size
     -   Resize internal buffer and notify the PTY of new terminal size (`TIOCSWINSZ`)
--   Forward key and mouse input from DVUI to your input handler
+-   Forward key and mouse input from Raylib to your input handler:
+    -   Use `IsKeyPressed()`, `GetKeyPressed()`, and `GetCharPressed()`
+    -   Handle special keys like arrows, function keys, and modifiers
 
 ---
 
@@ -299,7 +303,7 @@ Each phase must be implemented and tested in isolation before proceeding to the 
 
     -   Maintain multiple PTYs and buffers
     -   Switch between them using hotkeys
-    -   Update DVUI UI to support tab headers or selectors
+    -   Update Raylib UI to support tab headers or selectors
 
 -   **Session persistence:**
 
@@ -321,7 +325,7 @@ Each phase must be implemented and tested in isolation before proceeding to the 
     -   Mouse click support (for copy/paste or future apps)
 
 -   **Rendering improvements:**
-    -   Consider using a font engine for better Unicode and font rendering
+    -   Support different font sizes and families using Raylib's font system
     -   Support font fallback or emoji rendering in future
 
 ---
