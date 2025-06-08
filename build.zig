@@ -74,10 +74,60 @@ pub fn build(b: *std.Build) void {
 
     const run_phase_tests = b.addRunArtifact(phase_tests);
 
+    // Phase 7: Comprehensive unit tests
+    const ansi_parser_tests = b.addTest(.{
+        .root_source_file = b.path("tests/test_ansi_parser.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    ansi_parser_tests.linkLibC();
+    ansi_parser_tests.root_module.addImport("raylib", raylib_dep.module("raylib"));
+    ansi_parser_tests.linkLibrary(raylib_dep.artifact("raylib"));
+    ansi_parser_tests.root_module.addImport("ansi", b.createModule(.{ .root_source_file = b.path("src/terminal/ansi.zig") }));
+
+    const buffer_behavior_tests = b.addTest(.{
+        .root_source_file = b.path("tests/test_buffer_behavior.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    buffer_behavior_tests.linkLibC();
+    buffer_behavior_tests.root_module.addImport("raylib", raylib_dep.module("raylib"));
+    buffer_behavior_tests.linkLibrary(raylib_dep.artifact("raylib"));
+    buffer_behavior_tests.root_module.addImport("buffer", b.createModule(.{ .root_source_file = b.path("src/terminal/buffer.zig") }));
+
+    const key_normalization_tests = b.addTest(.{
+        .root_source_file = b.path("tests/test_key_normalization.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    key_normalization_tests.linkLibC();
+    key_normalization_tests.root_module.addImport("raylib", raylib_dep.module("raylib"));
+    key_normalization_tests.linkLibrary(raylib_dep.artifact("raylib"));
+    key_normalization_tests.root_module.addImport("processor", b.createModule(.{ .root_source_file = b.path("src/input/processor.zig") }));
+    key_normalization_tests.root_module.addImport("keyboard", b.createModule(.{ .root_source_file = b.path("src/input/keyboard.zig") }));
+
+    const history_navigation_tests = b.addTest(.{
+        .root_source_file = b.path("tests/test_history_navigation.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    history_navigation_tests.linkLibC();
+    history_navigation_tests.root_module.addImport("raylib", raylib_dep.module("raylib"));
+    history_navigation_tests.linkLibrary(raylib_dep.artifact("raylib"));
+
+    const run_ansi_parser_tests = b.addRunArtifact(ansi_parser_tests);
+    const run_buffer_behavior_tests = b.addRunArtifact(buffer_behavior_tests);
+    const run_key_normalization_tests = b.addRunArtifact(key_normalization_tests);
+    const run_history_navigation_tests = b.addRunArtifact(history_navigation_tests);
+
     // Create a test step that can be invoked with `zig build test`
     const test_step = b.step("test", "Run all unit tests");
     test_step.dependOn(&run_main_unit_tests.step);
     test_step.dependOn(&run_phase_tests.step);
+    test_step.dependOn(&run_ansi_parser_tests.step);
+    test_step.dependOn(&run_buffer_behavior_tests.step);
+    test_step.dependOn(&run_key_normalization_tests.step);
+    test_step.dependOn(&run_history_navigation_tests.step);
 
     // Create individual test steps for specific phases
     const test_main_step = b.step("test-main", "Run main module tests");
@@ -85,4 +135,17 @@ pub fn build(b: *std.Build) void {
 
     const test_phases_step = b.step("test-phases", "Run phase-specific tests");
     test_phases_step.dependOn(&run_phase_tests.step);
+
+    // Phase 7: Individual test steps
+    const test_ansi_step = b.step("test-ansi", "Run ANSI parser tests");
+    test_ansi_step.dependOn(&run_ansi_parser_tests.step);
+
+    const test_buffer_step = b.step("test-buffer", "Run buffer behavior tests");
+    test_buffer_step.dependOn(&run_buffer_behavior_tests.step);
+
+    const test_keys_step = b.step("test-keys", "Run key normalization tests");
+    test_keys_step.dependOn(&run_key_normalization_tests.step);
+
+    const test_history_step = b.step("test-history", "Run history navigation tests");
+    test_history_step.dependOn(&run_history_navigation_tests.step);
 }
