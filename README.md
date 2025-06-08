@@ -4,7 +4,7 @@
 
 ![Zig](https://img.shields.io/badge/Zig-0.14.0-F7A41D?style=for-the-badge&logo=zig&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20X11-blue?style=for-the-badge)
-![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
+![License](https://img.shields.io/badge/License-GPL--3.0-blue?style=for-the-badge)
 ![Status](https://img.shields.io/badge/Status-Phase%207%20Complete-brightgreen?style=for-the-badge)
 
 *A modern, lightweight terminal emulator built with Zig and Raylib*
@@ -137,7 +137,7 @@ sudo apt install libgl1-mesa-dev libglu1-mesa-dev libxcursor-dev libxext-dev \
                  libxrender-dev libx11-dev
 
 # Clone and build
-git clone <repository-url>
+git clone git@github.com:fulgidus/zigline.git
 cd zigline
 zig build
 
@@ -153,7 +153,7 @@ sudo dnf install mesa-libGL-devel mesa-libGLU-devel libXcursor-devel \
                  libXrandr-devel libXrender-devel libX11-devel
 
 # Clone and build
-git clone <repository-url>
+git clone git@github.com:fulgidus/zigline.git
 cd zigline
 zig build
 
@@ -363,7 +363,7 @@ zig fmt src/ tests/
 ### 📄 Project Documentation
 - [CHANGELOG.md](CHANGELOG.md) - Detailed version history
 - [RELEASE_NOTES.md](RELEASE_NOTES.md) - Release information
-- [LICENSE](LICENSE) - MIT license terms
+- [LICENSE](LICENSE) - GPL-3.0 license terms
 
 ## 🏷️ Version Information
 
