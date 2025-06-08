@@ -31,7 +31,7 @@ jobs:
     strategy:
       matrix:
         # Cross-platform support: Linux with current LTS versions (as documented in README)
-        os: [ubuntu-latest, ubuntu-22.04, ubuntu-20.04]
+        os: [ubuntu-latest, ubuntu-22.04]
         zig-version: [0.14.0]
         
     runs-on: ${{ matrix.os }}
