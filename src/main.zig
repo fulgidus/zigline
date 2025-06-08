@@ -9,16 +9,17 @@ const TerminalBuffer = @import("terminal/buffer.zig").TerminalBuffer;
 const AnsiProcessor = @import("terminal/ansi.zig").AnsiProcessor;
 const InputProcessor = @import("input/processor.zig").InputProcessor;
 const RaylibGui = @import("ui/raylib_gui.zig").RaylibGui;
+const ConfigManager = @import("config/config.zig").ConfigManager;
 
 // Version constant following semantic versioning
-const VERSION = "0.3.0";
+const VERSION = "0.4.0";
 
 // Main entry point for the Zigline terminal emulator
 pub fn main() !void {
     print("Zigline Terminal Emulator v{s}\n", .{VERSION});
     print("An experimental terminal emulator written in Zig\n", .{});
-    print("Phase 5: Raylib GUI Integration\n", .{});
-    print("Starting GUI mode...\n\n", .{});
+    print("Phase 6: Advanced Features - Session Management\n", .{});
+    print("Starting GUI with tabbed sessions...\n\n", .{});
 
     // Initialize general purpose allocator
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -80,39 +81,29 @@ fn initializeTerminal(allocator: std.mem.Allocator) !void {
     try testAnsiProcessing(allocator);
 }
 
-// Initialize the terminal emulator with GUI (Phase 5)
+// Initialize the terminal emulator with GUI (Phase 6: Session Management)
 fn initializeTerminalWithGui(allocator: std.mem.Allocator) !void {
-    Logger.info("Initializing terminal emulator with Raylib GUI...", .{});
+    Logger.info("Initializing terminal emulator with Raylib GUI and session management...", .{});
 
-    // Create a basic terminal instance
-    var terminal = Terminal.init(allocator, 80, 24) catch |err| {
-        Logger.err("Failed to initialize terminal: {}", .{err});
+    // Initialize configuration manager
+    var config_manager = ConfigManager.init(allocator, "zigline_config.json") catch |err| {
+        Logger.warn("Failed to load configuration: {}, using defaults", .{err});
         return err;
     };
-    defer terminal.deinit();
+    defer config_manager.deinit();
 
-    Logger.info("Terminal emulator initialized successfully", .{});
-    Logger.info("Terminal size: {d}x{d}", .{ terminal.buffer.width, terminal.buffer.height });
+    Logger.info("Configuration system initialized", .{});
 
-    // Initialize PTY for shell communication
-    var pty = PTY.init(allocator) catch |err| {
-        Logger.warn("Failed to initialize PTY: {} (continuing without PTY)", .{err});
-        return err;
-    };
-    defer pty.deinit();
+    // Create and run the GUI with session management and configuration
+    var gui = RaylibGui.init(allocator, config_manager);
+    defer gui.deinit();
 
-    Logger.info("PTY initialized successfully", .{});
-
-    // Initialize Raylib GUI
-    var gui = RaylibGui.init(allocator, &terminal, &pty);
-    Logger.info("Raylib GUI initialized successfully", .{});
+    Logger.info("Raylib GUI with session management initialized successfully", .{});
 
     // Run the GUI main loop
     try gui.run();
 
     Logger.info("GUI main loop completed, performing cleanup", .{});
-
-    // PTY cleanup is handled by GUI deinit, no need for explicit cleanup here
 }
 
 // Enhanced interactive event loop with keyboard input support (Fase 4)
@@ -370,7 +361,7 @@ fn testAnsiProcessing(allocator: std.mem.Allocator) !void {
 // Test function for unit testing
 test "version constant" {
     const testing = std.testing;
-    try testing.expect(std.mem.eql(u8, VERSION, "0.3.0"));
+    try testing.expect(std.mem.eql(u8, VERSION, "0.4.0"));
 }
 
 test "basic functionality" {

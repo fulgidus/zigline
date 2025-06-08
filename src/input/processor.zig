@@ -122,12 +122,12 @@ pub const InputProcessor = struct {
             },
 
             .arrow_up => {
-                try self.handleHistoryUp();
+                try self.handleHistoryUp(pty);
                 return null;
             },
 
             .arrow_down => {
-                try self.handleHistoryDown();
+                try self.handleHistoryDown(pty);
                 return null;
             },
 
@@ -212,40 +212,55 @@ pub const InputProcessor = struct {
     }
 
     // Handle history navigation
-    fn handleHistoryUp(self: *InputProcessor) !void {
+    fn handleHistoryUp(self: *InputProcessor, pty: ?*PTY) !void {
         if (self.history.items.len == 0) return;
 
         if (self.history_index > 0) {
             self.history_index -= 1;
         }
 
-        try self.loadFromHistory();
+        try self.loadFromHistory(pty);
         Logger.debug("History up: loaded command {}", .{self.history_index});
     }
 
-    fn handleHistoryDown(self: *InputProcessor) !void {
+    fn handleHistoryDown(self: *InputProcessor, pty: ?*PTY) !void {
         if (self.history.items.len == 0) return;
 
         if (self.history_index < self.history.items.len - 1) {
             self.history_index += 1;
-            try self.loadFromHistory();
+            try self.loadFromHistory(pty);
         } else {
             // Clear input buffer when going past last history entry
             self.input_buffer.clearRetainingCapacity();
             self.cursor_position = 0;
+            // Send ANSI escape sequence to clear current line on display
+            if (pty) |p| {
+                _ = p.write("\x1b[2K\x1b[0G") catch {}; // Clear entire line and move cursor to column 0
+            }
         }
 
         Logger.debug("History down: loaded command {}", .{self.history_index});
     }
 
     // Load command from history
-    fn loadFromHistory(self: *InputProcessor) !void {
+    fn loadFromHistory(self: *InputProcessor, pty: ?*PTY) !void {
         if (self.history_index >= self.history.items.len) return;
+
+        // Send ANSI escape sequence to clear current line on display
+        // This prevents visual artifacts when switching between commands of different lengths
+        if (pty) |p| {
+            _ = p.write("\x1b[2K\x1b[0G") catch {}; // Clear entire line and move cursor to column 0
+        }
 
         const command = self.history.items[self.history_index];
         self.input_buffer.clearRetainingCapacity();
         try self.input_buffer.appendSlice(command);
         self.cursor_position = @intCast(self.input_buffer.items.len);
+
+        // Send the new command to display
+        if (pty) |p| {
+            _ = p.write(command) catch {}; // Display the new command
+        }
     }
 
     // Finish input and return the command
