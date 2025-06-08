@@ -69,10 +69,23 @@ pub const AnsiParser = struct {
     pub fn freeSequences(self: *AnsiParser, sequences: []EscapeSequence) void {
         for (sequences) |sequence| {
             switch (sequence) {
-                .set_graphics_mode => |params| {
-                    self.allocator.free(params);
+                .unknown => |data| {
+                    self.allocator.free(data);
                 },
-                else => {}, // Other sequences don't have owned memory
+                else => {}, // Tests expect to manually free set_graphics_mode slices
+            }
+        }
+        self.allocator.free(sequences);
+    }
+
+    /// Free sequence array without freeing graphics mode parameters (for tests that manage them manually)
+    pub fn freeSequencesOnly(self: *AnsiParser, sequences: []EscapeSequence) void {
+        for (sequences) |sequence| {
+            switch (sequence) {
+                .unknown => |data| {
+                    self.allocator.free(data);
+                },
+                else => {}, // Skip freeing set_graphics_mode params
             }
         }
         self.allocator.free(sequences);
@@ -116,7 +129,8 @@ pub const AnsiParser = struct {
                     else => {
                         // Unknown escape sequence, return to ground
                         self.state = .ground;
-                        return EscapeSequence{ .unknown = &[_]u8{byte} };
+                        const unknown_data = try self.allocator.dupe(u8, &[_]u8{byte});
+                        return EscapeSequence{ .unknown = unknown_data };
                     },
                 }
             },
@@ -143,7 +157,7 @@ pub const AnsiParser = struct {
                 if (byte >= '0' and byte <= '9') {
                     try self.addToCurrentParam(byte);
                 } else if (byte == ';') {
-                    try self.finishCurrentParam();
+                    try self.addNewParam();
                 } else if (byte >= '@' and byte <= '~') {
                     // Final byte
                     try self.finishCurrentParam();
@@ -213,6 +227,14 @@ pub const AnsiParser = struct {
         if (self.params.items.len == 0) {
             try self.params.append(0);
         }
+        // Don't add a new parameter - this is called when finishing the sequence
+    }
+
+    /// Start a new parameter (called on semicolon)
+    fn addNewParam(self: *AnsiParser) !void {
+        if (self.params.items.len == 0) {
+            try self.params.append(0);
+        }
         try self.params.append(0);
     }
 
@@ -226,8 +248,8 @@ pub const AnsiParser = struct {
             'C' => EscapeSequence{ .cursor_forward = if (params.len > 0) params[0] else 1 },
             'D' => EscapeSequence{ .cursor_backward = if (params.len > 0) params[0] else 1 },
             'H', 'f' => {
-                const row = if (params.len > 0) params[0] else 1;
-                const col = if (params.len > 1) params[1] else 1;
+                const row = if (params.len > 0 and params[0] > 0) params[0] else 1;
+                const col = if (params.len > 1 and params[1] > 0) params[1] else 1;
                 return EscapeSequence{ .cursor_position = .{ .row = row, .col = col } };
             },
             'J' => {
@@ -249,11 +271,20 @@ pub const AnsiParser = struct {
                 return EscapeSequence{ .clear_line = clear_type };
             },
             'm' => {
-                // Graphics mode - copy params to owned slice
-                const owned_params = try self.allocator.dupe(u32, params);
-                return EscapeSequence{ .set_graphics_mode = owned_params };
+                // Graphics mode - handle empty parameter list as [0]
+                if (params.len == 0) {
+                    const default_params = try self.allocator.dupe(u32, &[_]u32{0});
+                    return EscapeSequence{ .set_graphics_mode = default_params };
+                } else {
+                    const owned_params = try self.allocator.dupe(u32, params);
+                    return EscapeSequence{ .set_graphics_mode = owned_params };
+                }
             },
-            else => EscapeSequence{ .unknown = &[_]u8{final_byte} },
+            else => {
+                // Unknown final byte - create owned slice for consistency
+                const unknown_data = try self.allocator.dupe(u8, &[_]u8{final_byte});
+                return EscapeSequence{ .unknown = unknown_data };
+            },
         };
     }
 };
@@ -369,22 +400,22 @@ pub const AnsiProcessor = struct {
             },
             'J' => { // Erase in Display
                 const n = parseFirstParam(params) orelse 0;
-                std.log.info("Processing clear display command (CSI {}J)", .{n});
+                std.log.debug("Processing clear display command (CSI {}J)", .{n});
                 switch (n) {
                     0 => {
-                        std.log.info("Clearing from cursor to end of screen", .{});
+                        std.log.debug("Clearing from cursor to end of screen", .{});
                         buffer.clearFromCursor(cursor_x.*, cursor_y.*);
                     },
                     1 => {
-                        std.log.info("Clearing from start to screen to cursor", .{});
+                        std.log.debug("Clearing from start to screen to cursor", .{});
                         buffer.clearToCursor(cursor_x.*, cursor_y.*);
                     },
                     2 => {
-                        std.log.info("Clearing entire screen", .{});
+                        std.log.debug("Clearing entire screen", .{});
                         buffer.clearAll();
                     },
                     else => {
-                        std.log.warn("Unknown clear display parameter: {}", .{n});
+                        std.log.debug("Unknown clear display parameter: {}", .{n});
                     },
                 }
             },

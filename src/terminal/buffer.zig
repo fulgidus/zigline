@@ -7,6 +7,11 @@ pub const TerminalBuffer = struct {
     cells: []Cell,
     allocator: std.mem.Allocator,
 
+    // Current graphics state for new characters
+    current_fg_color: Color = Color.white,
+    current_bg_color: Color = Color.black,
+    current_attributes: Attributes = Attributes{},
+
     /// A single cell in the terminal buffer
     pub const Cell = struct {
         char: u21 = ' ',
@@ -110,10 +115,22 @@ pub const TerminalBuffer = struct {
         self.cells[index] = cell;
     }
 
-    /// Set a character at the specified position
+    /// Set a character at the specified position using current graphics state
     pub fn setChar(self: *TerminalBuffer, x: u32, y: u32, char: u8) void {
         if (self.getCellMut(x, y)) |cell| {
             cell.char = char;
+            cell.fg_color = self.current_fg_color;
+            cell.bg_color = self.current_bg_color;
+            cell.attributes = self.current_attributes;
+        }
+    }
+
+    /// Set a character at the specified position with explicit colors (legacy method)
+    pub fn setCharWithColors(self: *TerminalBuffer, x: u32, y: u32, char: u8, fg_color: Color, bg_color: Color) void {
+        if (self.getCellMut(x, y)) |cell| {
+            cell.char = char;
+            cell.fg_color = fg_color;
+            cell.bg_color = bg_color;
         }
     }
 
@@ -205,7 +222,12 @@ pub const TerminalBuffer = struct {
     /// Clear entire screen
     pub fn clearAll(self: *TerminalBuffer) void {
         for (self.cells) |*cell| {
-            cell.* = Cell{};
+            cell.* = Cell{
+                .char = ' ',
+                .fg_color = self.current_fg_color,
+                .bg_color = self.current_bg_color,
+                .attributes = self.current_attributes,
+            };
         }
     }
 
@@ -215,7 +237,12 @@ pub const TerminalBuffer = struct {
         var x = cursor_x;
         while (x < self.width) : (x += 1) {
             if (self.getCellMut(x, cursor_y)) |cell| {
-                cell.* = Cell{};
+                cell.* = Cell{
+                    .char = ' ',
+                    .fg_color = self.current_fg_color,
+                    .bg_color = self.current_bg_color,
+                    .attributes = self.current_attributes,
+                };
             }
         }
     }
@@ -226,7 +253,12 @@ pub const TerminalBuffer = struct {
         var x: u32 = 0;
         while (x <= cursor_x and x < self.width) : (x += 1) {
             if (self.getCellMut(x, cursor_y)) |cell| {
-                cell.* = Cell{};
+                cell.* = Cell{
+                    .char = ' ',
+                    .fg_color = self.current_fg_color,
+                    .bg_color = self.current_bg_color,
+                    .attributes = self.current_attributes,
+                };
             }
         }
     }
@@ -237,19 +269,99 @@ pub const TerminalBuffer = struct {
         var x: u32 = 0;
         while (x < self.width) : (x += 1) {
             if (self.getCellMut(x, y)) |cell| {
-                cell.* = Cell{};
+                cell.* = Cell{
+                    .char = ' ',
+                    .fg_color = self.current_fg_color,
+                    .bg_color = self.current_bg_color,
+                    .attributes = self.current_attributes,
+                };
             }
         }
     }
 
     /// Apply graphics mode (colors and attributes)
     pub fn applyGraphicsMode(self: *TerminalBuffer, code: u32, cursor_x: u32, cursor_y: u32) void {
-        _ = self;
-        _ = code;
+        // Store current graphics state for future characters
         _ = cursor_x;
         _ = cursor_y;
-        // TODO: Implement graphics mode application
-        // This would set colors and attributes for future text
+
+        switch (code) {
+            0 => {
+                // Reset all attributes to default
+                self.current_fg_color = Color.white;
+                self.current_bg_color = Color.black;
+                self.current_attributes = Attributes{};
+                std.log.debug("Reset graphics mode to default", .{});
+            },
+            1 => {
+                // Bold/bright attribute
+                self.current_attributes.bold = true;
+                std.log.debug("Setting bold attribute", .{});
+            },
+            30...37 => {
+                // Foreground colors (30-37)
+                self.current_fg_color = switch (code) {
+                    30 => Color.black,
+                    31 => Color.red,
+                    32 => Color.green,
+                    33 => Color.yellow,
+                    34 => Color.blue,
+                    35 => Color.magenta,
+                    36 => Color.cyan,
+                    37 => Color.white,
+                    else => Color.white,
+                };
+                std.log.debug("Setting foreground color to: {}", .{self.current_fg_color});
+            },
+            40...47 => {
+                // Background colors (40-47)
+                self.current_bg_color = switch (code) {
+                    40 => Color.black,
+                    41 => Color.red,
+                    42 => Color.green,
+                    43 => Color.yellow,
+                    44 => Color.blue,
+                    45 => Color.magenta,
+                    46 => Color.cyan,
+                    47 => Color.white,
+                    else => Color.black,
+                };
+                std.log.debug("Setting background color to: {}", .{self.current_bg_color});
+            },
+            90...97 => {
+                // Bright foreground colors (90-97)
+                self.current_fg_color = switch (code) {
+                    90 => Color.bright_black,
+                    91 => Color.bright_red,
+                    92 => Color.bright_green,
+                    93 => Color.bright_yellow,
+                    94 => Color.bright_blue,
+                    95 => Color.bright_magenta,
+                    96 => Color.bright_cyan,
+                    97 => Color.bright_white,
+                    else => Color.bright_white,
+                };
+                std.log.debug("Setting bright foreground color to: {}", .{self.current_fg_color});
+            },
+            100...107 => {
+                // Bright background colors (100-107)
+                self.current_bg_color = switch (code) {
+                    100 => Color.bright_black,
+                    101 => Color.bright_red,
+                    102 => Color.bright_green,
+                    103 => Color.bright_yellow,
+                    104 => Color.bright_blue,
+                    105 => Color.bright_magenta,
+                    106 => Color.bright_cyan,
+                    107 => Color.bright_white,
+                    else => Color.bright_black,
+                };
+                std.log.debug("Setting bright background color to: {}", .{self.current_bg_color});
+            },
+            else => {
+                std.log.debug("Unknown graphics mode code: {}", .{code});
+            },
+        }
     }
 };
 

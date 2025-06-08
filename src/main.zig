@@ -26,8 +26,8 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    // Initialize global logger
-    Logger.initGlobal(.info);
+    // Initialize global logger with reduced verbosity
+    Logger.initGlobal(.warn);
     Logger.info("Zigline v{s} starting up with GUI", .{VERSION});
 
     // Initialize the terminal emulator with GUI
@@ -197,18 +197,20 @@ fn readAndDisplayPTYOutput(pty: *PTY, terminal: *Terminal) !void {
 
             for (output) |byte| {
                 if (byte == '\r') {
-                    // Convert bare carriage return to carriage return + newline for proper display
+                    // Handle carriage return - don't add extra newline unless followed by other chars
                     try display_output.append('\r');
                 } else if (byte == '\n') {
-                    // Ensure we have proper line ending
+                    // Handle newline properly
                     try display_output.append('\n');
                 } else {
                     try display_output.append(byte);
                 }
             }
 
-            // Print processed output
-            print("{s}", .{display_output.items});
+            // Only print if we have actual content to avoid duplicates
+            if (display_output.items.len > 0) {
+                print("{s}", .{display_output.items});
+            }
 
             // Process through ANSI parser (demonstration)
             var ansi_processor = AnsiProcessor.init(terminal.allocator);

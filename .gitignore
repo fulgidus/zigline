@@ -43,3 +43,5 @@ release/
 dist/
 *.tar.gz
 *.zip
+
+zigline-sessions.json

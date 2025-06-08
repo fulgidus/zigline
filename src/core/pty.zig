@@ -21,6 +21,7 @@ pub const PTYError = error{
     ReadFailed,
     WriteFailed,
     WouldBlock,
+    OutOfMemory,
 };
 
 /// PTY management structure
@@ -46,7 +47,7 @@ pub const PTY = struct {
         // Spawn shell process
         const child_pid = try spawnShell(slave_fd);
 
-        Logger.info("PTY initialized successfully - master_fd: {d}, child_pid: {d}", .{ master_fd, child_pid });
+        Logger.debug("PTY initialized successfully - master_fd: {d}, child_pid: {d}", .{ master_fd, child_pid });
 
         return PTY{
             .master_fd = master_fd,
@@ -319,16 +320,28 @@ fn spawnShell(slave_fd: posix.fd_t) PTYError!posix.pid_t {
     };
 
     if (pid == 0) {
-        // Child process - set up new session
-        // Use direct system call for setsid (simplified approach)
-        // For now, skip setsid to avoid compilation issues
+        // Child process - set up new session and job control
         Logger.debug("Child process started, setting up PTY redirection", .{});
 
-        // Make this PTY the controlling terminal
-        // On macOS, we need to do this properly (simplified for now)
-        // _ = posix.ioctl(slave_fd, std.os.linux.T.IOCSCTTY, @as(u32, 0)) catch {
-        //     Logger.warn("Failed to set controlling terminal, continuing...", .{});
-        // };
+        // Create new session to establish proper job control
+        // Use direct syscall for setsid since it might not be available in all Zig versions
+        const setsid_result = std.os.linux.syscall1(.setsid, 0);
+        if (setsid_result != 0) {
+            Logger.debug("Created new session with SID: {d}", .{setsid_result});
+        } else {
+            Logger.warn("Failed to create new session, continuing without job control", .{});
+        }
+
+        // Make this PTY the controlling terminal using the standard Linux ioctl
+        if (builtin.target.os.tag == .linux) {
+            const TIOCSCTTY = 0x540E; // Linux ioctl number for TIOCSCTTY
+            const ioctl_result = std.c.ioctl(slave_fd, TIOCSCTTY, @as(c_int, 0));
+            if (ioctl_result == -1) {
+                Logger.warn("Failed to set controlling terminal, job control may not work properly", .{});
+            } else {
+                Logger.debug("Successfully set PTY as controlling terminal", .{});
+            }
+        }
 
         // Redirect stdin/stdout/stderr to slave PTY
         _ = posix.dup2(slave_fd, posix.STDIN_FILENO) catch {
@@ -351,15 +364,17 @@ fn spawnShell(slave_fd: posix.fd_t) PTYError!posix.pid_t {
         const shell = posix.getenv("SHELL") orelse "/bin/bash";
 
         // Create argv with proper shell arguments
+        // Use -i flag for interactive mode but avoid -l to prevent login shell errors
         const argv = [_:null]?[*:0]const u8{
             @constCast(shell.ptr),
-            @constCast("-l"), // Login shell
+            "-i", // Interactive mode
             null,
         };
 
-        Logger.info("Executing shell: {s} with args: {s}", .{ shell, "-l" });
+        Logger.debug("Executing shell: {s} with interactive mode", .{shell});
 
-        // Use execveZ which exists in Zig 0.14.0
+        // Use execveZ with standard environment
+        // The improved PTY setup should reduce error messages
         const result = posix.execveZ(@constCast(shell.ptr), &argv, std.c.environ);
 
         // If we reach here, exec failed
@@ -370,7 +385,6 @@ fn spawnShell(slave_fd: posix.fd_t) PTYError!posix.pid_t {
     // Parent process - close slave fd (child has its own copy)
     posix.close(slave_fd);
 
-    // Return child PID
-    Logger.info("Shell process spawned with PID: {d}", .{pid});
+    // Return child PID        Logger.debug("Shell process spawned with PID: {d}", .{pid});
     return pid;
 }

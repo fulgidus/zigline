@@ -450,33 +450,8 @@ pub const RaylibGui = struct {
         };
 
         if (bytes_read > 0) {
-            // Log raw bytes for debugging
-            std.log.info("Read {} bytes from PTY: {any}", .{ bytes_read, buffer[0..bytes_read] });
-
-            // Check for specific sequences
-            const data = buffer[0..bytes_read];
-            if (std.mem.indexOf(u8, data, "\x1b[2J")) |_| {
-                std.log.info("🔍 DETECTED CLEAR SEQUENCE (ESC[2J) in PTY output!", .{});
-            }
-            if (std.mem.indexOf(u8, data, "\x1b[H")) |_| {
-                std.log.info("🔍 DETECTED HOME CURSOR SEQUENCE (ESC[H) in PTY output!", .{});
-            }
-            if (std.mem.indexOf(u8, data, "\x1b[1;1H")) |_| {
-                std.log.info("🔍 DETECTED CURSOR POSITION SEQUENCE (ESC[1;1H) in PTY output!", .{});
-            }
-
-            // Log as both hex and as printable characters for complete debug info
-            var hex_str: [512]u8 = undefined;
-            var hex_pos: usize = 0;
-            for (data) |byte| {
-                const written = std.fmt.bufPrint(hex_str[hex_pos..], "{X:0>2} ", .{byte}) catch break;
-                hex_pos += written.len;
-                if (hex_pos >= hex_str.len - 10) break;
-            }
-            std.log.info("PTY output as hex: {s}", .{hex_str[0..hex_pos]});
-
+            std.log.debug("Read {} bytes from PTY", .{bytes_read});
             try active_session.terminal.processData(buffer[0..bytes_read]);
-            std.log.info("✅ PTY data processed through terminal", .{});
         }
     }
 
@@ -685,7 +660,15 @@ pub const RaylibGui = struct {
             .magenta => rl.Color.magenta,
             .cyan => rl.Color{ .r = 0, .g = 255, .b = 255, .a = 255 },
             .white => rl.Color.white,
-            else => rl.Color.white,
+            // Bright colors
+            .bright_black => rl.Color.gray,
+            .bright_red => rl.Color{ .r = 255, .g = 85, .b = 85, .a = 255 },
+            .bright_green => rl.Color{ .r = 85, .g = 255, .b = 85, .a = 255 },
+            .bright_yellow => rl.Color{ .r = 255, .g = 255, .b = 85, .a = 255 },
+            .bright_blue => rl.Color{ .r = 85, .g = 85, .b = 255, .a = 255 },
+            .bright_magenta => rl.Color{ .r = 255, .g = 85, .b = 255, .a = 255 },
+            .bright_cyan => rl.Color{ .r = 85, .g = 255, .b = 255, .a = 255 },
+            .bright_white => rl.Color{ .r = 255, .g = 255, .b = 255, .a = 255 },
         };
     }
 

@@ -231,6 +231,11 @@ pub const Config = struct {
 
     /// Allocator used for dynamic strings
     allocator: Allocator,
+    
+    /// Track whether shell was dynamically allocated
+    shell_allocated: bool = false,
+    /// Track whether font path was dynamically allocated
+    font_path_allocated: bool = false,
 
     /// Create default configuration
     pub fn default(allocator: Allocator) Config {
@@ -242,6 +247,8 @@ pub const Config = struct {
             .window = WindowConfig.default(),
             .shell = "/bin/bash",
             .allocator = allocator,
+            .shell_allocated = false,
+            .font_path_allocated = false,
         };
     }
 
@@ -341,6 +348,7 @@ pub const Config = struct {
             if (std.mem.indexOf(u8, json_content[shell_start..], "\"")) |end| {
                 const shell_str = json_content[shell_start .. shell_start + end];
                 config.shell = try allocator.dupe(u8, shell_str);
+                config.shell_allocated = true;
             }
         }
 
@@ -350,6 +358,7 @@ pub const Config = struct {
             if (std.mem.indexOf(u8, json_content[path_start..], "\"")) |end| {
                 const path_str = json_content[path_start .. path_start + end];
                 config.font.path = try allocator.dupe(u8, path_str);
+                config.font_path_allocated = true;
             }
         }
 
@@ -424,14 +433,16 @@ pub const Config = struct {
 
     /// Cleanup allocated resources
     pub fn deinit(self: *Config) void {
-        // Free dynamically allocated strings if any
-        if (self.shell.ptr != "/bin/bash".ptr) {
+        // Free dynamically allocated strings if they were allocated
+        if (self.shell_allocated) {
             self.allocator.free(self.shell);
+            self.shell_allocated = false;
         }
 
-        // Free font path if it's not the default
-        if (self.font.path.ptr != "assets/fonts/ttf/FiraCode-Regular.ttf".ptr) {
+        // Free font path if it was dynamically allocated
+        if (self.font_path_allocated) {
             self.allocator.free(self.font.path);
+            self.font_path_allocated = false;
         }
     }
 };
