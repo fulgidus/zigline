@@ -65,6 +65,19 @@ pub const AnsiParser = struct {
         self.intermediate_chars.deinit();
     }
 
+    /// Free an array of escape sequences and their owned memory
+    pub fn freeSequences(self: *AnsiParser, sequences: []EscapeSequence) void {
+        for (sequences) |sequence| {
+            switch (sequence) {
+                .set_graphics_mode => |params| {
+                    self.allocator.free(params);
+                },
+                else => {}, // Other sequences don't have owned memory
+            }
+        }
+        self.allocator.free(sequences);
+    }
+
     /// Parse a sequence of bytes and return any complete escape sequences
     pub fn parse(self: *AnsiParser, input: []const u8) ![]EscapeSequence {
         var sequences = std.ArrayList(EscapeSequence).init(self.allocator);
@@ -363,7 +376,7 @@ pub const AnsiProcessor = struct {
                         buffer.clearFromCursor(cursor_x.*, cursor_y.*);
                     },
                     1 => {
-                        std.log.info("Clearing from start of screen to cursor", .{});
+                        std.log.info("Clearing from start to screen to cursor", .{});
                         buffer.clearToCursor(cursor_x.*, cursor_y.*);
                     },
                     2 => {

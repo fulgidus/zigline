@@ -9,6 +9,7 @@ const SessionManager = @import("session_manager.zig").SessionManager;
 const Session = @import("session_manager.zig").Session;
 const Config = @import("../config/config.zig").Config;
 const ConfigManager = @import("../config/config.zig").ConfigManager;
+const EmbeddedAssets = @import("../embedded_assets.zig");
 
 pub const RaylibGui = struct {
     allocator: std.mem.Allocator,
@@ -131,55 +132,107 @@ pub const RaylibGui = struct {
     fn loadCustomFont(self: *Self) void {
         const config = self.config_manager.getConfig();
 
-        // Try configured font first, then fallbacks
-        var font_paths = std.ArrayList([:0]const u8).init(self.allocator);
-        defer font_paths.deinit();
+        std.log.info("Loading font with path: {s}, size: {d}", .{ config.font.path, config.font.size });
 
-        // Add primary font path
-        const primary_font_z = self.allocator.dupeZ(u8, config.font.path) catch return;
-        defer self.allocator.free(primary_font_z);
-        font_paths.append(primary_font_z) catch return;
-
-        // Add fallback fonts
-        for (config.font.fallbacks) |fallback| {
-            const fallback_z = self.allocator.dupeZ(u8, fallback) catch continue;
-            defer self.allocator.free(fallback_z);
-            font_paths.append(fallback_z) catch continue;
+        // First try to load from embedded assets
+        if (self.tryLoadEmbeddedFont(config.font.path)) {
+            return;
         }
 
-        for (font_paths.items) |font_path| {
-            // Check if file exists before trying to load
-            if (std.fs.cwd().access(font_path, .{})) |_| {
-                std.log.info("Attempting to load font: {s}", .{font_path});
+        // Then try to load from file path directly
+        if (self.tryLoadFontFromPath(config.font.path)) {
+            return;
+        }
 
-                // Load font with the configured font size
-                const font = rl.loadFontEx(font_path, self.font_size, null) catch {
-                    std.log.warn("Failed to load font: {s}", .{font_path});
-                    continue;
-                };
-
-                // Check if font loaded successfully (raylib returns default font on failure)
-                if (font.texture.id != 0) {
-                    self.custom_font = font;
-
-                    // Update character dimensions for monospace font
-                    const sample_text = "M"; // Use 'M' as it's typically the widest character
-                    const text_size = rl.measureTextEx(font, sample_text, @as(f32, @floatFromInt(self.font_size)), 0);
-                    self.char_width = text_size.x;
-                    self.char_height = text_size.y;
-
-                    std.log.info("Font loaded successfully: {s}", .{font_path});
-                    std.log.info("Character dimensions: {d}x{d}", .{ self.char_width, self.char_height });
-                    return;
-                }
-            } else |_| {
-                // File doesn't exist, try next path
-                continue;
+        // Finally try fallback paths
+        for (config.font.fallbacks) |fallback| {
+            if (self.tryLoadFontFromPath(fallback)) {
+                return;
             }
         }
 
         std.log.warn("Could not load any configured fonts, using default font", .{});
         self.custom_font = null;
+    }
+
+    fn tryLoadEmbeddedFont(self: *Self, font_path: []const u8) bool {
+        // Extract font name from path (e.g., "assets/fonts/ttf/FiraCode-Regular.ttf" -> "FiraCode-Regular")
+        var font_name: []const u8 = undefined;
+
+        if (std.mem.endsWith(u8, font_path, "FiraCode-Regular.ttf")) {
+            font_name = "FiraCode-Regular";
+        } else if (std.mem.endsWith(u8, font_path, "FiraCode-Bold.ttf")) {
+            font_name = "FiraCode-Bold";
+        } else if (std.mem.endsWith(u8, font_path, "FiraCode-Light.ttf")) {
+            font_name = "FiraCode-Light";
+        } else if (std.mem.endsWith(u8, font_path, "FiraCode-Medium.ttf")) {
+            font_name = "FiraCode-Medium";
+        } else {
+            return false; // Font not available in embedded assets
+        }
+
+        if (EmbeddedAssets.getFontData(font_name)) |font_data| {
+            std.log.info("Loading embedded font: {s} ({d} bytes)", .{ font_name, font_data.len });
+
+            // Load font from memory data
+            const font = rl.loadFontFromMemory(".ttf", font_data, self.font_size, null) catch {
+                std.log.warn("Failed to load embedded font: {s}", .{font_name});
+                return false;
+            };
+
+            // Check if font loaded successfully
+            if (font.texture.id != 0) {
+                self.custom_font = font;
+
+                // Update character dimensions for monospace font
+                const sample_text = "M"; // Use 'M' as it's typically the widest character
+                const text_size = rl.measureTextEx(font, sample_text, @as(f32, @floatFromInt(self.font_size)), 0);
+                self.char_width = text_size.x;
+                self.char_height = text_size.y;
+
+                std.log.info("Embedded font loaded successfully: {s}", .{font_name});
+                std.log.info("Character dimensions: {d}x{d}", .{ self.char_width, self.char_height });
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    fn tryLoadFontFromPath(self: *Self, font_path: []const u8) bool {
+        // Check if file exists before trying to load
+        if (std.fs.cwd().access(font_path, .{})) |_| {
+            std.log.info("Attempting to load font from file: {s}", .{font_path});
+
+            // Create null-terminated string for raylib
+            const font_path_z = self.allocator.dupeZ(u8, font_path) catch return false;
+            defer self.allocator.free(font_path_z);
+
+            // Load font with the configured font size
+            const font = rl.loadFontEx(font_path_z, self.font_size, null) catch {
+                std.log.warn("Failed to load font from file: {s}", .{font_path});
+                return false;
+            };
+
+            // Check if font loaded successfully (raylib returns default font on failure)
+            if (font.texture.id != 0) {
+                self.custom_font = font;
+
+                // Update character dimensions for monospace font
+                const sample_text = "M"; // Use 'M' as it's typically the widest character
+                const text_size = rl.measureTextEx(font, sample_text, @as(f32, @floatFromInt(self.font_size)), 0);
+                self.char_width = text_size.x;
+                self.char_height = text_size.y;
+
+                std.log.info("Font loaded successfully from file: {s}", .{font_path});
+                std.log.info("Character dimensions: {d}x{d}", .{ self.char_width, self.char_height });
+                return true;
+            }
+        } else |_| {
+            std.log.debug("Font file not found: {s}", .{font_path});
+        }
+
+        return false;
     }
 
     fn handleInput(self: *Self) !void {

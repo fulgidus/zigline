@@ -28,7 +28,7 @@ test "ANSI parser cursor movement sequences" {
     {
         const input = "\x1B[5A";
         const sequences = try parser.parse(input);
-        defer allocator.free(sequences);
+        defer parser.freeSequences(sequences);
 
         try testing.expect(sequences.len == 1);
         try testing.expect(sequences[0] == .cursor_up);
@@ -39,7 +39,7 @@ test "ANSI parser cursor movement sequences" {
     {
         const input = "\x1B[10B";
         const sequences = try parser.parse(input);
-        defer allocator.free(sequences);
+        defer parser.freeSequences(sequences);
 
         try testing.expect(sequences.len == 1);
         try testing.expect(sequences[0] == .cursor_down);
@@ -50,7 +50,7 @@ test "ANSI parser cursor movement sequences" {
     {
         const input = "\x1B[3C";
         const sequences = try parser.parse(input);
-        defer allocator.free(sequences);
+        defer parser.freeSequences(sequences);
 
         try testing.expect(sequences.len == 1);
         try testing.expect(sequences[0] == .cursor_forward);
@@ -61,7 +61,7 @@ test "ANSI parser cursor movement sequences" {
     {
         const input = "\x1B[7D";
         const sequences = try parser.parse(input);
-        defer allocator.free(sequences);
+        defer parser.freeSequences(sequences);
 
         try testing.expect(sequences.len == 1);
         try testing.expect(sequences[0] == .cursor_backward);
@@ -79,7 +79,7 @@ test "ANSI parser cursor positioning" {
     {
         const input = "\x1B[15;25H";
         const sequences = try parser.parse(input);
-        defer allocator.free(sequences);
+        defer parser.freeSequences(sequences);
 
         try testing.expect(sequences.len == 1);
         try testing.expect(sequences[0] == .cursor_position);
@@ -91,7 +91,7 @@ test "ANSI parser cursor positioning" {
     {
         const input = "\x1B[10H";
         const sequences = try parser.parse(input);
-        defer allocator.free(sequences);
+        defer parser.freeSequences(sequences);
 
         try testing.expect(sequences.len == 1);
         try testing.expect(sequences[0] == .cursor_position);
@@ -103,7 +103,7 @@ test "ANSI parser cursor positioning" {
     {
         const input = "\x1B[H";
         const sequences = try parser.parse(input);
-        defer allocator.free(sequences);
+        defer parser.freeSequences(sequences);
 
         try testing.expect(sequences.len == 1);
         try testing.expect(sequences[0] == .cursor_position);
@@ -122,7 +122,7 @@ test "ANSI parser clear screen sequences" {
     {
         const input = "\x1B[0J";
         const sequences = try parser.parse(input);
-        defer allocator.free(sequences);
+        defer parser.freeSequences(sequences);
 
         try testing.expect(sequences.len == 1);
         try testing.expect(sequences[0] == .clear_screen);
@@ -133,7 +133,7 @@ test "ANSI parser clear screen sequences" {
     {
         const input = "\x1B[1J";
         const sequences = try parser.parse(input);
-        defer allocator.free(sequences);
+        defer parser.freeSequences(sequences);
 
         try testing.expect(sequences.len == 1);
         try testing.expect(sequences[0] == .clear_screen);
@@ -144,7 +144,7 @@ test "ANSI parser clear screen sequences" {
     {
         const input = "\x1B[2J";
         const sequences = try parser.parse(input);
-        defer allocator.free(sequences);
+        defer parser.freeSequences(sequences);
 
         try testing.expect(sequences.len == 1);
         try testing.expect(sequences[0] == .clear_screen);
@@ -155,7 +155,7 @@ test "ANSI parser clear screen sequences" {
     {
         const input = "\x1B[J";
         const sequences = try parser.parse(input);
-        defer allocator.free(sequences);
+        defer parser.freeSequences(sequences);
 
         try testing.expect(sequences.len == 1);
         try testing.expect(sequences[0] == .clear_screen);
@@ -173,7 +173,7 @@ test "ANSI parser clear line sequences" {
     {
         const input = "\x1B[0K";
         const sequences = try parser.parse(input);
-        defer allocator.free(sequences);
+        defer parser.freeSequences(sequences);
 
         try testing.expect(sequences.len == 1);
         try testing.expect(sequences[0] == .clear_line);
@@ -184,7 +184,7 @@ test "ANSI parser clear line sequences" {
     {
         const input = "\x1B[1K";
         const sequences = try parser.parse(input);
-        defer allocator.free(sequences);
+        defer parser.freeSequences(sequences);
 
         try testing.expect(sequences.len == 1);
         try testing.expect(sequences[0] == .clear_line);
@@ -195,7 +195,7 @@ test "ANSI parser clear line sequences" {
     {
         const input = "\x1B[2K";
         const sequences = try parser.parse(input);
-        defer allocator.free(sequences);
+        defer parser.freeSequences(sequences);
 
         try testing.expect(sequences.len == 1);
         try testing.expect(sequences[0] == .clear_line);
@@ -213,7 +213,7 @@ test "ANSI parser graphics mode sequences" {
     {
         const input = "\x1B[1m"; // Bold
         const sequences = try parser.parse(input);
-        defer allocator.free(sequences);
+        defer parser.freeSequences(sequences);
 
         try testing.expect(sequences.len == 1);
         try testing.expect(sequences[0] == .set_graphics_mode);
@@ -228,7 +228,7 @@ test "ANSI parser graphics mode sequences" {
     {
         const input = "\x1B[1;31;42m"; // Bold, red foreground, green background
         const sequences = try parser.parse(input);
-        defer allocator.free(sequences);
+        defer parser.freeSequences(sequences);
 
         try testing.expect(sequences.len == 1);
         try testing.expect(sequences[0] == .set_graphics_mode);
@@ -245,7 +245,7 @@ test "ANSI parser graphics mode sequences" {
     {
         const input = "\x1B[0m";
         const sequences = try parser.parse(input);
-        defer allocator.free(sequences);
+        defer parser.freeSequences(sequences);
 
         try testing.expect(sequences.len == 1);
         try testing.expect(sequences[0] == .set_graphics_mode);
@@ -265,7 +265,7 @@ test "ANSI parser multiple sequences in one input" {
 
     const input = "\x1B[2J\x1B[1;1H\x1B[31m";
     const sequences = try parser.parse(input);
-    defer allocator.free(sequences);
+    defer parser.freeSequences(sequences);
 
     try testing.expect(sequences.len == 3);
 
@@ -297,7 +297,7 @@ test "ANSI parser invalid and unknown sequences" {
     {
         const input = "\x1B[99Z"; // Unknown final character
         const sequences = try parser.parse(input);
-        defer allocator.free(sequences);
+        defer parser.freeSequences(sequences);
 
         try testing.expect(sequences.len == 1);
         try testing.expect(sequences[0] == .unknown);
@@ -309,7 +309,7 @@ test "ANSI parser invalid and unknown sequences" {
     {
         const input = "\x1B["; // Incomplete
         const sequences = try parser.parse(input);
-        defer allocator.free(sequences);
+        defer parser.freeSequences(sequences);
 
         try testing.expect(sequences.len == 0);
     }
@@ -325,7 +325,7 @@ test "ANSI parser edge cases" {
     {
         const input = "";
         const sequences = try parser.parse(input);
-        defer allocator.free(sequences);
+        defer parser.freeSequences(sequences);
 
         try testing.expect(sequences.len == 0);
     }
@@ -334,7 +334,7 @@ test "ANSI parser edge cases" {
     {
         const input = "Hello, World!";
         const sequences = try parser.parse(input);
-        defer allocator.free(sequences);
+        defer parser.freeSequences(sequences);
 
         try testing.expect(sequences.len == 0);
     }
@@ -343,7 +343,7 @@ test "ANSI parser edge cases" {
     {
         const input = "\x1B";
         const sequences = try parser.parse(input);
-        defer allocator.free(sequences);
+        defer parser.freeSequences(sequences);
 
         try testing.expect(sequences.len == 0);
     }
@@ -352,7 +352,7 @@ test "ANSI parser edge cases" {
     {
         const input = "Hello \x1B[31mWorld\x1B[0m!";
         const sequences = try parser.parse(input);
-        defer allocator.free(sequences);
+        defer parser.freeSequences(sequences);
 
         try testing.expect(sequences.len == 2);
         try testing.expect(sequences[0] == .set_graphics_mode);

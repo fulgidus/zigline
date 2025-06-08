@@ -3,8 +3,8 @@
 
 const std = @import("std");
 const testing = std.testing;
-const InputProcessor = @import("../src/input/processor.zig").InputProcessor;
-const PTY = @import("../src/core/pty.zig").PTY;
+const InputProcessor = @import("processor").InputProcessor;
+const PTY = @import("pty").PTY;
 
 // Mock PTY that captures written data for testing
 const MockPTY = struct {
@@ -42,7 +42,7 @@ const MockPTY = struct {
 };
 
 test "command history navigation sends clear sequence" {
-    var allocator = testing.allocator;
+    const allocator = testing.allocator;
 
     // Create input processor
     var input_processor = try InputProcessor.init(allocator);
@@ -81,7 +81,7 @@ test "command history navigation sends clear sequence" {
 }
 
 test "navigating past last history entry clears line" {
-    var allocator = testing.allocator;
+    const allocator = testing.allocator;
 
     // Create input processor
     var input_processor = try InputProcessor.init(allocator);

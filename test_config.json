@@ -1,0 +1,20 @@
+{
+  "theme": "dark",
+  "font_path": "assets/fonts/ttf/FiraCode-Bold.ttf",
+  "font_size": 18,
+  "window_width": 1400,
+  "window_height": 900,
+  "auto_save_sessions": true,
+  "auto_save_interval": 60,
+  "keybindings": {
+    "new_session": "Ctrl+T",
+    "close_session": "Ctrl+W", 
+    "next_session": "Ctrl+Tab",
+    "prev_session": "Shift+Ctrl+Tab"
+  },
+  "colors": {
+    "background": { "r": 30, "g": 30, "b": 30, "a": 255 },
+    "foreground": { "r": 255, "g": 255, "b": 255, "a": 255 },
+    "cursor": { "r": 255, "g": 150, "b": 0, "a": 255 }
+  }
+}

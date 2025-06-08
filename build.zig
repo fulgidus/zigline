@@ -114,6 +114,8 @@ pub fn build(b: *std.Build) void {
     history_navigation_tests.linkLibC();
     history_navigation_tests.root_module.addImport("raylib", raylib_dep.module("raylib"));
     history_navigation_tests.linkLibrary(raylib_dep.artifact("raylib"));
+    history_navigation_tests.root_module.addImport("processor", b.createModule(.{ .root_source_file = b.path("src/input/processor.zig") }));
+    history_navigation_tests.root_module.addImport("pty", b.createModule(.{ .root_source_file = b.path("src/core/pty.zig") }));
 
     const run_ansi_parser_tests = b.addRunArtifact(ansi_parser_tests);
     const run_buffer_behavior_tests = b.addRunArtifact(buffer_behavior_tests);

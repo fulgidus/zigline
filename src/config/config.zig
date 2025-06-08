@@ -330,9 +330,7 @@ pub const Config = struct {
     fn parseConfigJson(allocator: Allocator, json_content: []const u8) !Config {
         var config = Config.default(allocator);
 
-        // For now, we'll implement a simple JSON parser for the basic configuration
-        // In a production implementation, you might want to use a proper JSON parser
-
+        // Parse theme
         if (std.mem.indexOf(u8, json_content, "\"theme\": \"light\"") != null) {
             config.theme = ColorTheme.defaultLight();
         }
@@ -345,6 +343,76 @@ pub const Config = struct {
                 config.shell = try allocator.dupe(u8, shell_str);
             }
         }
+
+        // Parse font_path
+        if (std.mem.indexOf(u8, json_content, "\"font_path\": \"")) |start| {
+            const path_start = start + 14; // length of "\"font_path\": \""
+            if (std.mem.indexOf(u8, json_content[path_start..], "\"")) |end| {
+                const path_str = json_content[path_start .. path_start + end];
+                config.font.path = try allocator.dupe(u8, path_str);
+            }
+        }
+
+        // Parse font_size
+        if (std.mem.indexOf(u8, json_content, "\"font_size\": ")) |start| {
+            const size_start = start + 13; // length of "\"font_size\": "
+            var end_pos: usize = size_start;
+            while (end_pos < json_content.len and (json_content[end_pos] >= '0' and json_content[end_pos] <= '9')) {
+                end_pos += 1;
+            }
+            if (end_pos > size_start) {
+                const size_str = json_content[size_start..end_pos];
+                config.font.size = std.fmt.parseInt(u32, size_str, 10) catch config.font.size;
+            }
+        }
+
+        // Parse window_width
+        if (std.mem.indexOf(u8, json_content, "\"window_width\": ")) |start| {
+            const width_start = start + 16; // length of "\"window_width\": "
+            var end_pos: usize = width_start;
+            while (end_pos < json_content.len and (json_content[end_pos] >= '0' and json_content[end_pos] <= '9')) {
+                end_pos += 1;
+            }
+            if (end_pos > width_start) {
+                const width_str = json_content[width_start..end_pos];
+                config.window.width = std.fmt.parseInt(u32, width_str, 10) catch config.window.width;
+            }
+        }
+
+        // Parse window_height
+        if (std.mem.indexOf(u8, json_content, "\"window_height\": ")) |start| {
+            const height_start = start + 17; // length of "\"window_height\": "
+            var end_pos: usize = height_start;
+            while (end_pos < json_content.len and (json_content[end_pos] >= '0' and json_content[end_pos] <= '9')) {
+                end_pos += 1;
+            }
+            if (end_pos > height_start) {
+                const height_str = json_content[height_start..end_pos];
+                config.window.height = std.fmt.parseInt(u32, height_str, 10) catch config.window.height;
+            }
+        }
+
+        // Parse auto_save_interval
+        if (std.mem.indexOf(u8, json_content, "\"auto_save_interval\": ")) |start| {
+            const interval_start = start + 22; // length of "\"auto_save_interval\": "
+            var end_pos: usize = interval_start;
+            while (end_pos < json_content.len and (json_content[end_pos] >= '0' and json_content[end_pos] <= '9')) {
+                end_pos += 1;
+            }
+            if (end_pos > interval_start) {
+                const interval_str = json_content[interval_start..end_pos];
+                config.persistence.auto_save_interval = std.fmt.parseInt(u32, interval_str, 10) catch config.persistence.auto_save_interval;
+            }
+        }
+
+        // Parse auto_save_sessions
+        if (std.mem.indexOf(u8, json_content, "\"auto_save_sessions\": true") != null) {
+            config.persistence.enabled = true;
+        } else if (std.mem.indexOf(u8, json_content, "\"auto_save_sessions\": false") != null) {
+            config.persistence.enabled = false;
+        }
+
+        std.log.info("Configuration parsed - font_path: {s}, font_size: {d}, window: {d}x{d}", .{ config.font.path, config.font.size, config.window.width, config.window.height });
 
         return config;
     }
@@ -359,6 +427,11 @@ pub const Config = struct {
         // Free dynamically allocated strings if any
         if (self.shell.ptr != "/bin/bash".ptr) {
             self.allocator.free(self.shell);
+        }
+
+        // Free font path if it's not the default
+        if (self.font.path.ptr != "assets/fonts/ttf/FiraCode-Regular.ttf".ptr) {
+            self.allocator.free(self.font.path);
         }
     }
 };
