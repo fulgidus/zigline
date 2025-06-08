@@ -231,7 +231,7 @@ pub const Config = struct {
 
     /// Allocator used for dynamic strings
     allocator: Allocator,
-    
+
     /// Track whether shell was dynamically allocated
     shell_allocated: bool = false,
     /// Track whether font path was dynamically allocated
