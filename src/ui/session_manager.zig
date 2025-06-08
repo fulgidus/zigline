@@ -112,24 +112,24 @@ pub const SessionManager = struct {
     pub fn loadPersistedSessions(self: *Self, default_cols: u32, default_rows: u32) !void {
         if (self.persistence) |*persistence| {
             try persistence.loadSessions();
-            
+
             if (self.config.persistence.restore_on_startup) {
                 const persisted_sessions = persistence.getPersistedSessions();
-                
+
                 for (persisted_sessions) |persisted| {
                     std.log.info("Restoring session {d}: {s}", .{ persisted.id, persisted.name });
-                    
+
                     // Create session with persisted dimensions or defaults
                     const cols = if (persisted.width > 0) persisted.width else @as(u16, @intCast(default_cols));
                     const rows = if (persisted.height > 0) persisted.height else @as(u16, @intCast(default_rows));
-                    
+
                     const session_id = try self.createSession(persisted.name, cols, rows);
-                    
+
                     // TODO: Restore terminal buffer content
                     // This would require implementing buffer restoration in Terminal
                     std.log.debug("Session {d} restored (buffer restoration not yet implemented)", .{session_id});
                 }
-                
+
                 std.log.info("Restored {d} sessions from persistence", .{persisted_sessions.len});
             }
         }
@@ -140,12 +140,12 @@ pub const SessionManager = struct {
         if (self.persistence) |*persistence| {
             // Clear existing persisted sessions
             persistence.sessions.clearAndFree();
-            
+
             // Persist all current sessions
             for (self.sessions.items) |*session| {
                 try persistence.persistSession(session.id, session.name, session.terminal);
             }
-            
+
             try persistence.saveSessions();
         }
     }

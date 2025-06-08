@@ -49,7 +49,7 @@ jobs:
         
     # Cache Zig build artifacts for faster builds
     - name: Cache Zig build
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: |
           zig-cache
@@ -81,7 +81,7 @@ jobs:
     # Upload build artifacts for release
     - name: Upload build artifacts
       if: matrix.os == 'ubuntu-latest'
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: zigline-${{ runner.os }}-${{ github.sha }}
         path: |
@@ -132,7 +132,7 @@ jobs:
     - name: Setup Zig
       uses: goto-bus-stop/setup-zig@v2
       with:
-        version: 0.13.0
+        version: 0.14.0
         
     # Build release artifacts for all platforms
     - name: Build release artifacts
@@ -168,12 +168,13 @@ jobs:
       
     # Create GitHub release
     - name: Create Release
-      uses: actions/create-release@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: ${{ steps.get_version.outputs.version }}
-        release_name: Zigline ${{ steps.get_version.outputs.version }}
-        body_path: RELEASE_NOTES.md
-        draft: false
-        prerelease: true  # Mark as prerelease since it's experimental
+      run: |
+        gh release create ${{ steps.get_version.outputs.version }} \
+          --title "Zigline ${{ steps.get_version.outputs.version }}" \
+          --notes-file RELEASE_NOTES.md \
+          --prerelease \
+          release/zigline-linux-x86_64.tar.gz \
+          release/zigline-macos-x86_64.tar.gz \
+          release/zigline-windows-x86_64.zip

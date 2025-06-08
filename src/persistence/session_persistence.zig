@@ -32,11 +32,11 @@ pub const PersistedSession = struct {
     /// Initialize a new persisted session
     pub fn init(allocator: Allocator, id: u32, name: []const u8, terminal: *const Terminal) !PersistedSession {
         const now = std.time.timestamp();
-        
+
         // Get current working directory
         var cwd_buffer: [std.fs.max_path_bytes]u8 = undefined;
         const cwd = try std.process.getCwd(&cwd_buffer);
-        
+
         return PersistedSession{
             .id = id,
             .name = try allocator.dupe(u8, name),
@@ -56,7 +56,7 @@ pub const PersistedSession = struct {
     pub fn updateFromTerminal(self: *PersistedSession, allocator: Allocator, terminal: *const Terminal) !void {
         // Free old buffer content
         allocator.free(self.buffer_content);
-        
+
         // Update with new data
         self.buffer_content = try serializeTerminalBuffer(allocator, terminal);
         self.cursor_x = @intCast(terminal.cursor_x);
@@ -99,12 +99,12 @@ pub const PersistedSession = struct {
         try json.appendSlice(",\n  \"shell_command\": \"");
         try json.appendSlice(self.shell_command);
         try json.appendSlice("\",\n  \"buffer_content\": \"");
-        
+
         // Encode buffer content as base64 or escaped string
         const encoded_buffer = try encodeBufferContent(allocator, self.buffer_content);
         defer allocator.free(encoded_buffer);
         try json.appendSlice(encoded_buffer);
-        
+
         try json.appendSlice("\"\n}");
 
         return json.toOwnedSlice();
@@ -166,7 +166,7 @@ pub const SessionPersistence = struct {
         for (self.sessions.items, 0..) |session, i| {
             const json = try session.toJson(self.allocator);
             defer self.allocator.free(json);
-            
+
             // Indent the session JSON
             var lines = std.mem.splitScalar(u8, json, '\n');
             while (lines.next()) |line| {
@@ -176,7 +176,7 @@ pub const SessionPersistence = struct {
                     try file.writeAll("\n");
                 }
             }
-            
+
             if (i < self.sessions.items.len - 1) {
                 try file.writeAll(",\n");
             }
@@ -238,7 +238,7 @@ pub const SessionPersistence = struct {
     fn parseSessionsJson(_: *SessionPersistence, content: []const u8) !void {
         // This is a simplified JSON parser for demonstration
         // In a production system, you'd want to use a proper JSON parser
-        
+
         if (std.mem.indexOf(u8, content, "\"sessions\": [")) |_| {
             // For now, just log that we found the sessions array
             std.log.info("Found sessions array in persistence file", .{});
@@ -265,12 +265,12 @@ fn serializeTerminalBuffer(allocator: Allocator, terminal: *const Terminal) ![]u
         for (0..terminal.buffer.width) |x| {
             if (terminal.buffer.getCell(@intCast(x), @intCast(y))) |cell| {
                 try buffer.writer().print("{}:{}:{}:", .{ cell.char, cell.fg_color, cell.bg_color });
-                
+
                 // Add attributes
                 if (cell.attributes.bold) try buffer.appendSlice("B");
                 if (cell.attributes.italic) try buffer.appendSlice("I");
                 if (cell.attributes.underline) try buffer.appendSlice("U");
-                
+
                 try buffer.appendSlice("\n");
             }
         }

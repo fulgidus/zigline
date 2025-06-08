@@ -65,7 +65,7 @@ pub const RaylibGui = struct {
 
         // Enable window resizing
         rl.setWindowState(rl.ConfigFlags{ .window_resizable = true });
-        
+
         // Set minimum window size to ensure usability
         rl.setWindowMinSize(400, 300);
 
@@ -130,16 +130,16 @@ pub const RaylibGui = struct {
 
     fn loadCustomFont(self: *Self) void {
         const config = self.config_manager.getConfig();
-        
+
         // Try configured font first, then fallbacks
         var font_paths = std.ArrayList([:0]const u8).init(self.allocator);
         defer font_paths.deinit();
-        
+
         // Add primary font path
         const primary_font_z = self.allocator.dupeZ(u8, config.font.path) catch return;
         defer self.allocator.free(primary_font_z);
         font_paths.append(primary_font_z) catch return;
-        
+
         // Add fallback fonts
         for (config.font.fallbacks) |fallback| {
             const fallback_z = self.allocator.dupeZ(u8, fallback) catch continue;
@@ -281,10 +281,11 @@ pub const RaylibGui = struct {
         const wheel_move = rl.getMouseWheelMove();
         if (wheel_move != 0) {
             const mouse_pos = rl.getMousePosition();
-            
+
             // If mouse is over tab bar, use wheel to switch tabs
             if (mouse_pos.y >= self.margin_y and mouse_pos.y <= self.margin_y + self.tab_bar_height and
-                self.session_manager.getSessionCount() > 1) {
+                self.session_manager.getSessionCount() > 1)
+            {
                 if (wheel_move > 0) {
                     self.session_manager.switchToPrevSession();
                     std.log.debug("Switched to previous session via mouse wheel", .{});
@@ -458,8 +459,8 @@ pub const RaylibGui = struct {
         for (sessions) |*session| {
             // Check if mouse is hovering over this tab
             const is_hovering = mouse_pos.x >= x_offset and mouse_pos.x <= x_offset + tab_width and
-                               mouse_pos.y >= self.margin_y and mouse_pos.y <= self.margin_y + tab_height;
-            
+                mouse_pos.y >= self.margin_y and mouse_pos.y <= self.margin_y + tab_height;
+
             // Check if mouse is hovering over close button
             const close_button_x = x_offset + tab_width - 20;
             const is_hovering_close = is_hovering and mouse_pos.x >= close_button_x;
@@ -476,7 +477,7 @@ pub const RaylibGui = struct {
                 text_color = rl.Color.white;
                 border_color = rl.Color.white;
             }
-            
+
             if (is_hovering_close) {
                 close_color = rl.Color.red;
             }
@@ -491,11 +492,11 @@ pub const RaylibGui = struct {
             const text_x = x_offset + 10;
             const text_y = self.margin_y + 5;
             var name_buffer: [20]u8 = undefined;
-            const display_name = if (session.name.len > 18) 
+            const display_name = if (session.name.len > 18)
                 std.fmt.bufPrint(&name_buffer, "{s}...", .{session.name[0..15]}) catch session.name
-            else 
+            else
                 session.name;
-            
+
             self.drawTextWithFont(@ptrCast(display_name), @intFromFloat(text_x), @intFromFloat(text_y), 14, text_color);
 
             // Draw close button (×) with hover color
@@ -599,11 +600,11 @@ pub const RaylibGui = struct {
 
         // Shortcuts help (right side)
         const help_text = "Ctrl+T:New Ctrl+W:Close Ctrl+Tab:Next";
-        const help_width = if (self.custom_font) |font| 
-            rl.measureTextEx(font, help_text, 10, 0).x 
-        else 
+        const help_width = if (self.custom_font) |font|
+            rl.measureTextEx(font, help_text, 10, 0).x
+        else
             @as(f32, @floatFromInt(help_text.len * 6));
-        
+
         self.drawTextWithFont(help_text, current_width - @as(i32, @intFromFloat(help_width)) - 10, status_y, 10, rl.Color.gray);
     }
 
@@ -666,20 +667,15 @@ pub const RaylibGui = struct {
             if (new_cols != self.cols or new_rows != self.rows) {
                 const old_cols = self.cols;
                 const old_rows = self.rows;
-                
+
                 self.cols = new_cols;
                 self.rows = new_rows;
 
-                std.log.info("Window resized: {d}x{d} -> {d}x{d}, terminal: {d}x{d} -> {d}x{d}", .{ 
-                    self.last_window_width, self.last_window_height, 
-                    current_width, current_height,
-                    old_cols, old_rows,
-                    self.cols, self.rows 
-                });
+                std.log.info("Window resized: {d}x{d} -> {d}x{d}, terminal: {d}x{d} -> {d}x{d}", .{ self.last_window_width, self.last_window_height, current_width, current_height, old_cols, old_rows, self.cols, self.rows });
 
                 // Resize all sessions to new dimensions
                 try self.session_manager.resizeAllSessions(@intCast(self.cols), @intCast(self.rows));
-                
+
                 std.log.debug("All sessions resized to new terminal dimensions", .{});
             }
         }
