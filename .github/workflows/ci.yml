@@ -148,18 +148,12 @@ jobs:
         mkdir -p release/macos-x86_64
         cp zig-out/bin/* release/macos-x86_64/
         
-        # Windows x86_64
-        zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-windows
-        mkdir -p release/windows-x86_64
-        cp zig-out/bin/* release/windows-x86_64/
-        
     # Create release archives
     - name: Create release archives
       run: |
         cd release
         tar -czf zigline-linux-x86_64.tar.gz linux-x86_64/
         tar -czf zigline-macos-x86_64.tar.gz macos-x86_64/
-        zip -r zigline-windows-x86_64.zip windows-x86_64/
         
     # Extract version from tag
     - name: Get version
@@ -176,5 +170,4 @@ jobs:
           --notes-file RELEASE_NOTES.md \
           --prerelease \
           release/zigline-linux-x86_64.tar.gz \
-          release/zigline-macos-x86_64.tar.gz \
-          release/zigline-windows-x86_64.zip
+          release/zigline-macos-x86_64.tar.gz
