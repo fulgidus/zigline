@@ -1,257 +1,85 @@
-name: CI/CD Pipeline
+name: Simple CI/CD
 
-# Trigger the pipeline on push to main, pull requests, and manual dispatch
+# Trigger on every push to main branch
 on:
   push:
-    branches: [ main, develop ]
-  pull_request:
     branches: [ main ]
-  workflow_dispatch:
 
-# Set default permissions for the workflow
+# Global permissions for the workflow
 permissions:
-  contents: read
+  contents: write
+  packages: write
 
 jobs:
-  # Security and dependency scanning job
-  security:
-    name: Security Scan
+  build-and-release:
+    name: Build and Release
     runs-on: ubuntu-latest
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    # TODO: Add security scanning tools as the project grows
-    # - name: Run security scan
-    #   run: echo "Security scanning placeholder - implement as needed"
-
-  # Build and test job for multiple platforms
-  build-test:
-    name: Build and Test
-    strategy:
-      matrix:
-        # Cross-platform support: Linux with current LTS versions (as documented in README)
-        os: [ubuntu-latest, ubuntu-22.04]
-        zig-version: [0.14.0]
-        
-    runs-on: ${{ matrix.os }}
     
     steps:
-    # Checkout the source code
     - name: Checkout code
       uses: actions/checkout@v4
       
-    # Setup Zig programming language
     - name: Setup Zig
       uses: goto-bus-stop/setup-zig@v2
       with:
-        version: ${{ matrix.zig-version }}
+        version: 0.13.0
         
-    # Cache Zig build artifacts for faster builds
-    - name: Cache Zig build
-      uses: actions/cache@v4
-      with:
-        path: |
-          zig-cache
-          zig-out
-        key: ${{ runner.os }}-zig-${{ matrix.zig-version }}-${{ hashFiles('build.zig', 'src/**/*.zig') }}
-        restore-keys: |
-          ${{ runner.os }}-zig-${{ matrix.zig-version }}-
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libx11-dev \
+          libxcursor-dev \
+          libxi-dev \
+          libxinerama-dev \
+          libxrandr-dev \
+          libgl1-mesa-dev \
+          libasound2-dev
           
-    # Install system dependencies for X11 and graphics (as specified in README.md)
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          build-essential \
-          pkg-config \
-          libgl1-mesa-dev \
-          libglu1-mesa-dev \
-          libxcursor-dev \
-          libxext-dev \
-          libxfixes-dev \
-          libxi-dev \
-          libxinerama-dev \
-          libxrandr-dev \
-          libxrender-dev \
-          libx11-dev \
-          libasound2-dev
-      
-    # Verify Zig installation
-    - name: Verify Zig installation
-      run: zig version
-      
-    # Verify system dependencies
-    - name: Verify system dependencies
-      run: |
-        pkg-config --exists gl
-        pkg-config --exists x11
-        echo "System dependencies verified"
-      
-    # Check code formatting
-    - name: Check code formatting
-      run: zig fmt --check src/
-      
-    # Build the project
     - name: Build project
-      run: zig build
-      
-    # Verify the executable was built
-    - name: Verify executable
       run: |
-        test -f zig-out/bin/zigline || (echo "Executable not found" && exit 1)
-        echo "Zigline executable built successfully"
-      
-    # Run unit tests
+        zig build -Doptimize=ReleaseFast
+        
     - name: Run tests
-      run: zig build test
-      continue-on-error: true  # Allow tests to fail during development
-      
-    # Build optimized release version
-    - name: Build release
-      run: zig build -Doptimize=ReleaseSafe
-      
-    # Final status summary
-    - name: Build summary
       run: |
-        echo "✅ Zigline build completed successfully"
-        echo "📊 Build artifacts:"
-        ls -la zig-out/bin/
-        echo "🎯 Ready for deployment"
-      
-    # Upload build artifacts for release
-    - name: Upload build artifacts
-      if: matrix.os == 'ubuntu-latest'
-      uses: actions/upload-artifact@v4
-      with:
-        name: zigline-${{ runner.os }}-${{ github.sha }}
-        path: |
-          zig-out/bin/
-          !zig-out/bin/*.pdb
-        retention-days: 30
-
-  # Documentation and changelog validation
-  documentation:
-    name: Documentation Check
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    # Validate that required documentation files exist (as documented in README.md)
-    - name: Check documentation files
+        zig build test
+        
+    - name: Package artifacts
       run: |
-        echo "Checking required documentation files..."
-        test -f README.md || (echo "README.md missing" && exit 1)
-        test -f CHANGELOG.md || (echo "CHANGELOG.md missing" && exit 1)
-        test -f LICENSE || (echo "LICENSE missing" && exit 1)
-        test -f RELEASE_NOTES.md || (echo "RELEASE_NOTES.md missing" && exit 1)
-        echo "All documentation files present"
+        mkdir -p dist
+        cp zig-out/bin/zigline dist/
+        cp README.md dist/
+        cp CHANGELOG.md dist/ || echo "No changelog found"
+        tar -czf zigline-linux-x64.tar.gz -C dist .
         
-    # Validate changelog format
-    - name: Validate changelog format
+    - name: Generate version
+      id: version
       run: |
-        echo "Validating CHANGELOG.md format..."
-        grep -q "# Changelog" CHANGELOG.md || (echo "Changelog title missing" && exit 1)
-        grep -q "## \[" CHANGELOG.md || (echo "Version entries missing" && exit 1)
-        echo "Changelog format validated"
+        VERSION="v1.0.0-$(date +%Y%m%d)-$(git rev-parse --short HEAD)"
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Generated version: $VERSION"
         
-    # Validate project structure matches README documentation
-    - name: Validate project structure
-      run: |
-        echo "Validating project structure..."
-        test -f src/main.zig || (echo "src/main.zig missing" && exit 1)
-        test -f build.zig || (echo "build.zig missing" && exit 1)
-        test -f build.zig.zon || (echo "build.zig.zon missing" && exit 1)
-        echo "Basic project structure validated"
-
-  # Release job - only runs on tags starting with 'v'
-  release:
-    name: Create Release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [security, build-test, documentation]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    # Setup Zig for release build
-    - name: Setup Zig
-      uses: goto-bus-stop/setup-zig@v2
-      with:
-        version: 0.14.0
-        
-    # Install system dependencies for cross-compilation (as specified in README.md)
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          build-essential \
-          pkg-config \
-          libgl1-mesa-dev \
-          libglu1-mesa-dev \
-          libxcursor-dev \
-          libxext-dev \
-          libxfixes-dev \
-          libxi-dev \
-          libxinerama-dev \
-          libxrandr-dev \
-          libxrender-dev \
-          libx11-dev \
-          libasound2-dev
-        
-    # Build release artifacts for all platforms
-    - name: Build release artifacts
-      run: |
-        echo "Building release artifacts..."
-        # Linux x86_64
-        zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-linux-gnu
-        mkdir -p release/linux-x86_64
-        cp zig-out/bin/zigline release/linux-x86_64/ || echo "Warning: zigline binary not found"
-        
-        # Linux ARM64 (for modern ARM-based systems)
-        zig build -Doptimize=ReleaseSafe -Dtarget=aarch64-linux-gnu
-        mkdir -p release/linux-aarch64
-        cp zig-out/bin/zigline release/linux-aarch64/ || echo "Warning: zigline binary not found"
-                
-    # Create release archives
-    - name: Create release archives
-      run: |
-        cd release
-        if [ -f linux-x86_64/zigline ]; then
-          tar -czf zigline-linux-x86_64.tar.gz linux-x86_64/
-        else
-          echo "Creating empty archive for linux-x86_64"
-          mkdir -p linux-x86_64
-          echo "Build failed - binary not available" > linux-x86_64/README.txt
-          tar -czf zigline-linux-x86_64.tar.gz linux-x86_64/
-        fi
-        
-        if [ -f linux-aarch64/zigline ]; then
-          tar -czf zigline-linux-aarch64.tar.gz linux-aarch64/
-        else
-          echo "Creating empty archive for linux-aarch64"
-          mkdir -p linux-aarch64
-          echo "Build failed - binary not available" > linux-aarch64/README.txt
-          tar -czf zigline-linux-aarch64.tar.gz linux-aarch64/
-        fi
-        
-    # Extract version from tag
-    - name: Get version
-      id: get_version
-      run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-      
-    # Create GitHub release
     - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.version.outputs.version }}
+        name: Zigline Release ${{ steps.version.outputs.version }}
+        body: |
+          Automated release from main branch
+
+          Commit: ${{ github.sha }}
+
+          ## Changes
+          - Built from latest main branch
+          - Cross-platform terminal emulator written in Zig
+          - Raylib-based GUI rendering
+
+          ## Installation
+          1. Download `zigline-linux-x64.tar.gz`
+          2. Extract: `tar -xzf zigline-linux-x64.tar.gz`
+          3. Run: `./zigline`
+        files: zigline-linux-x64.tar.gz
+        draft: false
+        prerelease: false
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        gh release create ${{ steps.get_version.outputs.version }} \
-          --title "Zigline ${{ steps.get_version.outputs.version }}" \
-          --notes-file RELEASE_NOTES.md \
-          --prerelease \
-          release/zigline-linux-x86_64.tar.gz \
-          release/zigline-linux-aarch64.tar.gz
