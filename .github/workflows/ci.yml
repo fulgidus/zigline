@@ -30,9 +30,9 @@ jobs:
     name: Build and Test
     strategy:
       matrix:
-        # Cross-platform support: Linux, and macOS
-        os: [ubuntu-latest, macos-latest]
-        zig-version: [0.13.0]
+        # Cross-platform support: Linux
+        os: [ubuntu-latest, ubuntu-22.04, ubuntu-20.04, ubuntu-18.04]
+        zig-version: [0.14.0]
         
     runs-on: ${{ matrix.os }}
     
