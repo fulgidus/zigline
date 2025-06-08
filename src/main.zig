@@ -85,10 +85,16 @@ fn initializeTerminal(allocator: std.mem.Allocator) !void {
 fn initializeTerminalWithGui(allocator: std.mem.Allocator) !void {
     Logger.info("Initializing terminal emulator with Raylib GUI and session management...", .{});
 
-    // Initialize configuration manager
-    var config_manager = ConfigManager.init(allocator, "zigline_config.json") catch |err| {
-        Logger.warn("Failed to load configuration: {}, using defaults", .{err});
-        return err;
+    // Initialize configuration manager with fallback to defaults
+    var config_manager = ConfigManager.init(allocator, "zigline_config.json") catch |err| blk: {
+        Logger.warn("Failed to load configuration: {}, creating with defaults", .{err});
+        // Create a default configuration manager
+        const default_config = @import("config/config.zig").Config.default(allocator);
+        break :blk ConfigManager{
+            .config = default_config,
+            .config_file_path = "zigline_config.json",
+            .allocator = allocator,
+        };
     };
     defer config_manager.deinit();
 
