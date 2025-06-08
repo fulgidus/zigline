@@ -75,14 +75,21 @@ pub fn build(b: *std.Build) void {
     const run_phase_tests = b.addRunArtifact(phase_tests);
 
     // Phase 7: Comprehensive unit tests
+    // Note: Creating separate raylib dependency for tests to ensure X11 backend
+    const test_raylib_dep = b.dependency("raylib-zig", .{
+        .target = target,
+        .optimize = optimize,
+        .linux_display_backend = .X11, // Force X11 backend to avoid wayland-scanner dependency
+    });
+
     const ansi_parser_tests = b.addTest(.{
         .root_source_file = b.path("tests/test_ansi_parser.zig"),
         .target = target,
         .optimize = optimize,
     });
     ansi_parser_tests.linkLibC();
-    ansi_parser_tests.root_module.addImport("raylib", raylib_dep.module("raylib"));
-    ansi_parser_tests.linkLibrary(raylib_dep.artifact("raylib"));
+    ansi_parser_tests.root_module.addImport("raylib", test_raylib_dep.module("raylib"));
+    ansi_parser_tests.linkLibrary(test_raylib_dep.artifact("raylib"));
     ansi_parser_tests.root_module.addImport("ansi", b.createModule(.{ .root_source_file = b.path("src/terminal/ansi.zig") }));
 
     const buffer_behavior_tests = b.addTest(.{
@@ -91,8 +98,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     buffer_behavior_tests.linkLibC();
-    buffer_behavior_tests.root_module.addImport("raylib", raylib_dep.module("raylib"));
-    buffer_behavior_tests.linkLibrary(raylib_dep.artifact("raylib"));
+    buffer_behavior_tests.root_module.addImport("raylib", test_raylib_dep.module("raylib"));
+    buffer_behavior_tests.linkLibrary(test_raylib_dep.artifact("raylib"));
     buffer_behavior_tests.root_module.addImport("buffer", b.createModule(.{ .root_source_file = b.path("src/terminal/buffer.zig") }));
 
     const key_normalization_tests = b.addTest(.{
@@ -101,8 +108,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     key_normalization_tests.linkLibC();
-    key_normalization_tests.root_module.addImport("raylib", raylib_dep.module("raylib"));
-    key_normalization_tests.linkLibrary(raylib_dep.artifact("raylib"));
+    key_normalization_tests.root_module.addImport("raylib", test_raylib_dep.module("raylib"));
+    key_normalization_tests.linkLibrary(test_raylib_dep.artifact("raylib"));
     key_normalization_tests.root_module.addImport("processor", b.createModule(.{ .root_source_file = b.path("src/input/processor.zig") }));
     key_normalization_tests.root_module.addImport("keyboard", b.createModule(.{ .root_source_file = b.path("src/input/keyboard.zig") }));
 
@@ -112,8 +119,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     history_navigation_tests.linkLibC();
-    history_navigation_tests.root_module.addImport("raylib", raylib_dep.module("raylib"));
-    history_navigation_tests.linkLibrary(raylib_dep.artifact("raylib"));
+    history_navigation_tests.root_module.addImport("raylib", test_raylib_dep.module("raylib"));
+    history_navigation_tests.linkLibrary(test_raylib_dep.artifact("raylib"));
     history_navigation_tests.root_module.addImport("processor", b.createModule(.{ .root_source_file = b.path("src/input/processor.zig") }));
     history_navigation_tests.root_module.addImport("pty", b.createModule(.{ .root_source_file = b.path("src/core/pty.zig") }));
 

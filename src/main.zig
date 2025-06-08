@@ -101,7 +101,7 @@ fn initializeTerminalWithGui(allocator: std.mem.Allocator) !void {
     Logger.info("Configuration system initialized", .{});
 
     // Create and run the GUI with session management and configuration
-    var gui = RaylibGui.init(allocator, config_manager);
+    var gui = RaylibGui.init(allocator, &config_manager); // Pass a pointer to config_manager
     defer gui.deinit();
 
     Logger.info("Raylib GUI with session management initialized successfully", .{});
@@ -182,8 +182,13 @@ fn interactiveEventLoop(terminal: *Terminal, pty: *PTY, allocator: std.mem.Alloc
     Logger.info("Interactive event loop completed", .{});
 }
 
-// Helper function to read and display PTY output
+// Helper function to read and process PTY output (console mode only)
 fn readAndDisplayPTYOutput(pty: *PTY, terminal: *Terminal) !void {
+    return readPTYOutput(pty, terminal, true);
+}
+
+// Helper function to read PTY output with optional console display
+fn readPTYOutput(pty: *PTY, terminal: *Terminal, display_to_console: bool) !void {
     var buffer: [1024]u8 = undefined;
 
     // Read all available output
@@ -197,28 +202,31 @@ fn readAndDisplayPTYOutput(pty: *PTY, terminal: *Terminal) !void {
         if (bytes_read > 0) {
             const output = buffer[0..bytes_read];
 
-            // Process the output to handle carriage returns properly for display
-            var display_output = std.ArrayList(u8).init(terminal.allocator);
-            defer display_output.deinit();
+            // Only display to console if explicitly requested (console mode)
+            if (display_to_console) {
+                // Process the output to handle carriage returns properly for display
+                var display_output = std.ArrayList(u8).init(terminal.allocator);
+                defer display_output.deinit();
 
-            for (output) |byte| {
-                if (byte == '\r') {
-                    // Handle carriage return - don't add extra newline unless followed by other chars
-                    try display_output.append('\r');
-                } else if (byte == '\n') {
-                    // Handle newline properly
-                    try display_output.append('\n');
-                } else {
-                    try display_output.append(byte);
+                for (output) |byte| {
+                    if (byte == '\r') {
+                        // Handle carriage return - don't add extra newline unless followed by other chars
+                        try display_output.append('\r');
+                    } else if (byte == '\n') {
+                        // Handle newline properly
+                        try display_output.append('\n');
+                    } else {
+                        try display_output.append(byte);
+                    }
+                }
+
+                // Only print if we have actual content to avoid duplicates
+                if (display_output.items.len > 0) {
+                    print("{s}", .{display_output.items});
                 }
             }
 
-            // Only print if we have actual content to avoid duplicates
-            if (display_output.items.len > 0) {
-                print("{s}", .{display_output.items});
-            }
-
-            // Process through ANSI parser (demonstration)
+            // Always process through ANSI parser to update terminal buffer
             var ansi_processor = AnsiProcessor.init(terminal.allocator);
             defer ansi_processor.deinit();
 

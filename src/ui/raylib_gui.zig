@@ -11,18 +11,37 @@ const Config = @import("../config/config.zig").Config;
 const ConfigManager = @import("../config/config.zig").ConfigManager;
 const EmbeddedAssets = @import("../embedded_assets.zig");
 
+fn getFontCodepoints() []i32 {
+    const static = struct {
+        var codepoints: [96]i32 = undefined;
+        var initialized = false;
+    };
+
+    if (!static.initialized) {
+        // ASCII 32-126
+        var idx: usize = 0;
+        while (idx < 95) : (idx += 1) {
+            static.codepoints[idx] = @as(i32, @intCast(32 + idx));
+        }
+        static.codepoints[95] = 0x00D7; // × (Multiplication Sign U+00D7)
+        static.initialized = true;
+    }
+
+    return &static.codepoints;
+}
+
 pub const RaylibGui = struct {
     allocator: std.mem.Allocator,
     session_manager: SessionManager,
-    config_manager: ConfigManager,
+    config_manager: *ConfigManager, // Changed from ConfigManager to *ConfigManager
 
     // Window settings
-    width: i32 = 1200,
-    height: i32 = 800,
+    width: i32,
+    height: i32,
 
     // Font settings
     font_size: i32 = 16,
-    char_width: f32 = 9.0,
+    char_width: f32 = 10.0, // Default char width
     char_height: f32 = 16.0,
     custom_font: ?rl.Font = null,
 
@@ -42,12 +61,12 @@ pub const RaylibGui = struct {
 
     const Self = @This();
 
-    pub fn init(allocator: std.mem.Allocator, config_manager: ConfigManager) Self {
+    pub fn init(allocator: std.mem.Allocator, config_manager: *ConfigManager) Self { // Changed config_manager param to *ConfigManager
         const config = config_manager.getConfig();
         return Self{
             .allocator = allocator,
             .session_manager = SessionManager.init(allocator, config),
-            .config_manager = config_manager,
+            .config_manager = config_manager, // Assign pointer
             .width = @intCast(config.window.width),
             .height = @intCast(config.window.height),
             .font_size = @intCast(config.font.size),
@@ -56,7 +75,7 @@ pub const RaylibGui = struct {
 
     pub fn deinit(self: *Self) void {
         self.session_manager.deinit();
-        self.config_manager.deinit();
+        // self.config_manager.deinit(); // Removed: RaylibGui does not own ConfigManager
     }
 
     pub fn run(self: *Self) !void {
@@ -175,7 +194,7 @@ pub const RaylibGui = struct {
             std.log.info("Loading embedded font: {s} ({d} bytes)", .{ font_name, font_data.len });
 
             // Load font from memory data
-            const font = rl.loadFontFromMemory(".ttf", font_data, self.font_size, null) catch {
+            const font = rl.loadFontFromMemory(".ttf", font_data, self.font_size, getFontCodepoints()) catch {
                 std.log.warn("Failed to load embedded font: {s}", .{font_name});
                 return false;
             };
@@ -209,7 +228,7 @@ pub const RaylibGui = struct {
             defer self.allocator.free(font_path_z);
 
             // Load font with the configured font size
-            const font = rl.loadFontEx(font_path_z, self.font_size, null) catch {
+            const font = rl.loadFontEx(font_path_z, self.font_size, getFontCodepoints()) catch {
                 std.log.warn("Failed to load font from file: {s}", .{font_path});
                 return false;
             };

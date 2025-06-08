@@ -434,16 +434,16 @@ pub const Config = struct {
     /// Cleanup allocated resources
     pub fn deinit(self: *Config) void {
         // Free dynamically allocated strings if they were allocated
-        if (self.shell_allocated) {
+        if (self.shell_allocated and self.shell.ptr != FontConfig.default().path.ptr) { // Added check against default
             self.allocator.free(self.shell);
-            self.shell_allocated = false;
         }
+        self.shell_allocated = false; // Reset flag regardless
 
-        // Free font path if it was dynamically allocated
-        if (self.font_path_allocated) {
+        // Free font path if it was dynamically allocated and not the default path
+        if (self.font_path_allocated and self.font.path.ptr != FontConfig.default().path.ptr) { // Added check against default
             self.allocator.free(self.font.path);
-            self.font_path_allocated = false;
         }
+        self.font_path_allocated = false; // Reset flag regardless
     }
 };
 
